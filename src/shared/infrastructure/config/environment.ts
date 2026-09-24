@@ -71,6 +71,14 @@ export const environmentSchema = z.object({
     .transform((value) => value === 'true'),
   REDIS_KEY_PREFIX: z.string().default('ratelimit:'),
   /**
+   * Cache name for IAM authentication. Present means authenticate with a signed
+   * token instead of a password; absent means a plain instance, as locally.
+   *
+   * This is the cache's name, not its endpoint hostname — the token is signed
+   * against the former and the two differ.
+   */
+  REDIS_CACHE_NAME: z.string().optional(),
+  /**
    * When the counter store is unreachable: true keeps serving without a limit,
    * false rejects. Failing open is the default because losing the cache should
    * not take a storefront down, but it is a deliberate trade and worth being
