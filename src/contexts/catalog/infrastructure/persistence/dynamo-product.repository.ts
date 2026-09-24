@@ -46,7 +46,7 @@ interface ProductItem {
   description: string;
   priceInCents: number;
   currency: string;
-  imageUrl: string;
+  imageKey: string;
   available: number;
   reserved: number;
   version: number;
@@ -261,7 +261,7 @@ export class DynamoProductRepository implements ProductRepository {
       name: item.name,
       description: item.description,
       price: price.value,
-      imageUrl: item.imageUrl,
+      imageKey: item.imageKey,
       stock: stock.value,
       version: item.version,
     });

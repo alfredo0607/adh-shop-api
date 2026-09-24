@@ -6,6 +6,7 @@ import request from 'supertest';
 
 import { AllExceptionsFilter } from '../../../../shared/infrastructure/http/all-exceptions.filter';
 import { FindProduct } from '../../application/find-product.usecase';
+import { IMAGE_URL_SIGNER, type ImageUrlSigner } from '../../application/image-url-signer.port';
 import { ListProducts } from '../../application/list-products.usecase';
 import { aProduct } from '../../__fixtures__/product.fixture';
 import { InMemoryProductRepository } from '../persistence/in-memory-product.repository';
@@ -23,6 +24,10 @@ import { ProductController } from './product.controller';
 describe('ProductController', () => {
   let app: INestApplication;
 
+  const fakeSigner: ImageUrlSigner = {
+    sign: (imageKey) => `https://cdn.test/${imageKey}?signed`,
+  };
+
   beforeAll(async () => {
     const repository = new InMemoryProductRepository([
       aProduct({ id: 'prod-01', available: 10, priceInCents: 150_000 }),
@@ -35,6 +40,7 @@ describe('ProductController', () => {
       providers: [
         { provide: ListProducts, useValue: new ListProducts(repository) },
         { provide: FindProduct, useValue: new FindProduct(repository) },
+        { provide: IMAGE_URL_SIGNER, useValue: fakeSigner },
       ],
     }).compile();
 
@@ -64,6 +70,7 @@ describe('ProductController', () => {
     priceInCents: number;
     availableUnits: number;
     isPurchasable: boolean;
+    imageUrl: string;
   }
   interface PageBody {
     items: ProductBody[];
@@ -93,6 +100,16 @@ describe('ProductController', () => {
       // store is selling. Returning the entity directly would have published it.
       expect(page(response.body).items[0]).not.toHaveProperty('reserved');
       expect(page(response.body).items[0]).not.toHaveProperty('version');
+    });
+
+    it('returns a signed image URL instead of the storage key', async () => {
+      const response = await request(server()).get('/products').expect(200);
+
+      // The bucket is private: a bare key would be a broken image.
+      expect(page(response.body).items[0]?.imageUrl).toBe(
+        'https://cdn.test/product/cafetera.webp?signed',
+      );
+      expect(page(response.body).items[0]).not.toHaveProperty('imageKey');
     });
 
     it('returns the price as integer minor units', async () => {

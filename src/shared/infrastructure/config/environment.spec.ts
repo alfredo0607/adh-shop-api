@@ -59,6 +59,18 @@ describe('parseEnvironment', () => {
     );
   });
 
+  it('allows running without the image CDN outside production', () => {
+    expect(parseEnvironment(validEnvironment).CDN_DOMAIN).toBeUndefined();
+  });
+
+  it('refuses to boot production without every image CDN setting, naming each one', () => {
+    const attempt = (): unknown =>
+      parseEnvironment({ ...validEnvironment, NODE_ENV: 'production', CDN_DOMAIN: 'cdn.test' });
+
+    expect(attempt).toThrow(/CDN_KEY_PAIR_ID/);
+    expect(attempt).toThrow(/CDN_PRIVATE_KEY_BASE64/);
+  });
+
   it('treats the local DynamoDB endpoint as optional', () => {
     expect(parseEnvironment(validEnvironment).DYNAMODB_ENDPOINT).toBeUndefined();
     expect(

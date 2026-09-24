@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Param, Query } from '@nestjs/common';
+import { Controller, Get, Header, Inject, Param, Query } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { toHttpResponse } from '../../../../shared/infrastructure/http/domain-http.exception';
@@ -6,6 +6,7 @@ import { toHttpResponse } from '../../../../shared/infrastructure/http/domain-ht
 // so emitDecoratorMetadata records `Function` instead of the class and Nest
 // cannot resolve the dependency. It compiles cleanly and fails at boot.
 import { FindProduct } from '../../application/find-product.usecase';
+import { IMAGE_URL_SIGNER, type ImageUrlSigner } from '../../application/image-url-signer.port';
 import { ListProducts } from '../../application/list-products.usecase';
 import { ListProductsQueryDto } from './list-products.query';
 import { ProductPageResponse, ProductResponse } from './product.response';
@@ -24,6 +25,7 @@ export class ProductController {
   constructor(
     private readonly listProducts: ListProducts,
     private readonly findProduct: FindProduct,
+    @Inject(IMAGE_URL_SIGNER) private readonly images: ImageUrlSigner,
   ) {}
 
   @Get()
@@ -36,7 +38,7 @@ export class ProductController {
   async list(@Query() query: ListProductsQueryDto): Promise<ProductPageResponse> {
     const page = await this.listProducts.execute({ limit: query.limit, cursor: query.cursor });
 
-    return ProductPageResponse.from(toHttpResponse(page));
+    return ProductPageResponse.from(toHttpResponse(page), this.images);
   }
 
   @Get(':id')
@@ -48,6 +50,6 @@ export class ProductController {
   async findOne(@Param('id') id: string): Promise<ProductResponse> {
     const product = await this.findProduct.execute(id);
 
-    return ProductResponse.from(toHttpResponse(product));
+    return ProductResponse.from(toHttpResponse(product), this.images);
   }
 }

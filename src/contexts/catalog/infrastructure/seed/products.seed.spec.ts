@@ -36,7 +36,7 @@ describe('PRODUCT_SEED', () => {
         name: seed.name,
         description: seed.description,
         price: price.value,
-        imageUrl: seed.imageUrl,
+        imageKey: seed.imageKey,
         stock: stock.value,
       });
 

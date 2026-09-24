@@ -12,7 +12,7 @@ const buildProduct = (available: number, reserved = 0, version = 0): Product => 
     name: 'Cafetera',
     description: 'A coffee maker',
     price: price.value,
-    imageUrl: 'https://cdn.test/cafetera.webp',
+    imageKey: 'product/cafetera.webp',
     stock: stock.value,
     version,
   });
@@ -33,7 +33,7 @@ describe('Product', () => {
         name: 'x',
         description: '',
         price: price.value,
-        imageUrl: '',
+        imageKey: '',
         stock: stock.value,
       });
 
@@ -50,7 +50,7 @@ describe('Product', () => {
         name: '  ',
         description: '',
         price: price.value,
-        imageUrl: '',
+        imageKey: '',
         stock: stock.value,
       });
 
@@ -136,7 +136,7 @@ describe('Product', () => {
         description: 'A coffee maker',
         priceInCents: 150_000,
         currency: 'COP',
-        imageUrl: 'https://cdn.test/cafetera.webp',
+        imageKey: 'product/cafetera.webp',
         available: 8,
         reserved: 2,
         version: 3,

@@ -23,7 +23,7 @@ export const aProduct = (
     name: 'Cafetera',
     description: 'A coffee maker',
     price: price.value,
-    imageUrl: 'https://cdn.test/cafetera.webp',
+    imageKey: 'product/cafetera.webp',
     stock: stock.value,
   });
 
