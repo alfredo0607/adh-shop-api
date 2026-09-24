@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import Redis, { type RedisOptions } from 'ioredis';
 
 import type { Environment } from '../config/environment';
+import { createIamAuthToken } from './iam-auth-token';
 
 export const REDIS_CLIENT = Symbol('RedisClient');
 
@@ -15,6 +16,7 @@ export const REDIS_CLIENT = Symbol('RedisClient');
  */
 export const createRedisClient = (environment: Environment): Redis => {
   const logger = new Logger('RedisClient');
+  const usesIam = environment.REDIS_CACHE_NAME !== undefined;
 
   const options: RedisOptions = {
     host: environment.REDIS_HOST,
@@ -44,6 +46,36 @@ export const createRedisClient = (environment: Environment): Redis => {
 
   const client = new Redis(options);
 
+  /**
+   * Replaces the password with a freshly signed token.
+   *
+   * An IAM token is valid for fifteen minutes and is only used by the handshake
+   * — an established session outlives it. But ioredis re-sends AUTH from its
+   * options on every reconnect, so a long-lived client would eventually
+   * reconnect with a token that expired hours ago and fail to come back exactly
+   * when the network had just recovered.
+   *
+   * Refreshing before each connect makes that impossible, and costs a local
+   * signature rather than a network call.
+   */
+  const refreshToken = async (): Promise<void> => {
+    if (!usesIam) {
+      return;
+    }
+
+    try {
+      client.options.password = await createIamAuthToken({
+        cacheName: environment.REDIS_CACHE_NAME as string,
+        userId: environment.REDIS_USERNAME as string,
+        region: environment.AWS_REGION,
+      });
+    } catch (error) {
+      // Logged, never thrown: the limiter fails open, and a signing failure
+      // must not be louder than the outage it would cause.
+      logger.warn(`Could not sign an auth token: ${(error as Error).message}`);
+    }
+  };
+
   client.on('error', (error: Error) => {
     // Logged, never rethrown: an unhandled 'error' event on an ioredis client
     // terminates the process.
@@ -51,12 +83,22 @@ export const createRedisClient = (environment: Environment): Redis => {
   });
 
   client.on('ready', () => {
-    logger.log(`Connected to ${environment.REDIS_HOST}:${environment.REDIS_PORT}`);
+    logger.log(
+      `Connected to ${environment.REDIS_HOST}:${environment.REDIS_PORT}` +
+        (usesIam ? ' using IAM authentication' : ''),
+    );
   });
 
-  void client.connect().catch((error: Error) => {
-    logger.warn(`Initial Redis connection failed: ${error.message}. Retrying in the background.`);
+  // Every reconnection signs again, so a stale token can never be presented.
+  client.on('reconnecting', () => {
+    void refreshToken();
   });
+
+  void refreshToken()
+    .then(() => client.connect())
+    .catch((error: Error) => {
+      logger.warn(`Initial Redis connection failed: ${error.message}. Retrying in the background.`);
+    });
 
   return client;
 };
