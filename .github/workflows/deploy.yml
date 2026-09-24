@@ -40,9 +40,35 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # A tag in this registry is immutable: it must always name the same image.
+      # Re-running a deployment for a commit that was already built therefore
+      # cannot push again, and should not — the artifact exists and is the one
+      # that was tested. Rebuilding would either be refused, as it was, or
+      # produce a different image under a name that promised otherwise.
+      #
+      # So the build is skipped and the existing image released. Immutability is
+      # about a tag never changing, not about forbidding a redeploy.
+      - name: Is this commit already built
+        id: existing
+        run: |
+          set -euo pipefail
+
+          if aws ecr describe-images \
+               --repository-name "${{ vars.ECR_REPOSITORY }}" \
+               --image-ids "imageTag=${{ github.sha }}" \
+               --region "${{ vars.AWS_REGION }}" > /dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Image for ${{ github.sha }} is already in the registry; releasing it unchanged."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No image for ${{ github.sha }} yet; building."
+          fi
+
       - uses: docker/setup-buildx-action@v3
+        if: steps.existing.outputs.found == 'false'
 
       - name: Build and push
+        if: steps.existing.outputs.found == 'false'
         uses: docker/build-push-action@v6
         with:
           context: .
