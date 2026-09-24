@@ -58,6 +58,10 @@ jobs:
       # Deployment runs through Session Manager rather than SSH. No private key
       # is stored in this repository, no inbound port is required, and every
       # command is recorded in CloudTrail against the role that ran it.
+      # Scripts are synced before the release, not only at boot. The host
+      # downloads them in its user data, so a correction to deploy.sh would
+      # otherwise sit in S3 unused until the instance was replaced — and the
+      # deployment that needed the fix would keep failing the same way.
       - name: Release
         id: release
         run: |
@@ -70,7 +74,7 @@ jobs:
             --instance-ids "${{ vars.INSTANCE_ID }}" \
             --document-name AWS-RunShellScript \
             --comment "deploy ${{ github.sha }}" \
-            --parameters "commands=[\"sudo -u ec2-user /opt/adh-shop/deploy.sh '$IMAGE' '${{ vars.APP_NAME }}'\"]" \
+            --parameters "commands=[\"sudo -u ec2-user aws s3 sync s3://${{ vars.SCRIPTS_BUCKET }}/scripts/ /opt/adh-shop/ --exclude '*' --include '*.sh' --quiet\",\"sudo chmod +x /opt/adh-shop/*.sh\",\"sudo -u ec2-user /opt/adh-shop/deploy.sh '$IMAGE' '${{ vars.APP_NAME }}'\"]" \
             --query 'Command.CommandId' --output text)
 
           echo "command=$COMMAND_ID" >> "$GITHUB_OUTPUT"
