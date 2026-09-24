@@ -22,6 +22,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # The rate limiter's guarantee lives inside a Lua script the server
+    # executes, so its tests run against a real Redis. A mocked client would
+    # assert that the right string was sent and prove nothing about atomicity,
+    # which is the only property that matters there.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+
     steps:
       - uses: actions/checkout@v4
 

@@ -38,6 +38,48 @@ export const environmentSchema = z.object({
   CORS_ALLOWED_ORIGINS: z.string().default(''),
   RATE_LIMIT_TTL_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
+  RATE_LIMIT_BLOCK_MS: z.coerce.number().int().positive().default(60_000),
+
+  /**
+   * How many proxy hops to trust when deriving the client address.
+   *
+   * This number decides who gets rate limited, and both directions of error are
+   * serious. Too low and every request appears to come from the proxy, so all
+   * callers share one bucket and a single client can lock out everyone. Too
+   * high and a caller can forge X-Forwarded-For to look like a different
+   * address on every request, evading the limiter entirely.
+   *
+   * 0 for direct connections, which is correct locally. Behind CloudFront and
+   * nginx it is 2: CloudFront sets the client address, nginx appends
+   * CloudFront's.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().nonnegative().max(10).default(0),
+
+  /**
+   * Rate limit counters. Absent, the limiter falls back to in-process storage,
+   * which is correct for a single instance and silently wrong for more than
+   * one: each process would enforce the limit separately, multiplying it.
+   */
+  REDIS_HOST: z.string().optional(),
+  REDIS_PORT: z.coerce.number().int().positive().max(65535).default(6379),
+  /** Empty for a local instance with no auth, and never set when using IAM. */
+  REDIS_PASSWORD: z.string().optional(),
+  REDIS_USERNAME: z.string().optional(),
+  REDIS_TLS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  REDIS_KEY_PREFIX: z.string().default('ratelimit:'),
+  /**
+   * When the counter store is unreachable: true keeps serving without a limit,
+   * false rejects. Failing open is the default because losing the cache should
+   * not take a storefront down, but it is a deliberate trade and worth being
+   * able to invert.
+   */
+  RATE_LIMIT_FAIL_OPEN: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;

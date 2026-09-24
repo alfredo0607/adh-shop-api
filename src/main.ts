@@ -1,5 +1,6 @@
 import { Logger, RequestMethod, ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import compression from 'compression';
 import helmet from 'helmet';
@@ -10,7 +11,7 @@ import { ENVIRONMENT, type Environment } from './shared/infrastructure/config/en
 import { AllExceptionsFilter } from './shared/infrastructure/http/all-exceptions.filter';
 
 const bootstrap = async (): Promise<void> => {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(PinoLogger));
   const environment = app.get<Environment>(ENVIRONMENT);
@@ -39,6 +40,23 @@ const bootstrap = async (): Promise<void> => {
   // Probes are excluded from the prefix and from versioning: load balancers and
   // container orchestrators are configured with a fixed path, and they must not
   // have to be reconfigured when the API is versioned.
+  // Tells Express how many proxy hops to trust when deriving req.ip, which is
+  // what the rate limiter counts by.
+  //
+  // Both directions of error are serious. Trust too few hops and every request
+  // appears to come from the proxy, so all callers share one bucket and a
+  // single client can lock out everyone. Trust too many and a caller can forge
+  // X-Forwarded-For to present a different address on each request, evading the
+  // limiter completely. Express discards exactly this many entries from the
+  // right of the header; everything to the left of that line is
+  // attacker-controlled.
+  //
+  // 0 for a direct connection. Behind CloudFront and nginx it is 2: CloudFront
+  // records the client address, nginx appends CloudFront's.
+  if (environment.TRUST_PROXY_HOPS > 0) {
+    app.set('trust proxy', environment.TRUST_PROXY_HOPS);
+  }
+
   app.setGlobalPrefix('api', {
     exclude: [
       { path: 'health', method: RequestMethod.GET },
