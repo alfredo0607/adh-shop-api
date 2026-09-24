@@ -1,6 +1,6 @@
 import Redis from 'ioredis';
 
-import { RedisThrottlerStorage } from './redis-throttler.storage';
+import { RedisThrottlerStorage, buildKeys } from './redis-throttler.storage';
 
 /**
  * Exercised against a real Redis, because the behaviour under test lives inside
@@ -138,7 +138,7 @@ describe('RedisThrottlerStorage (integration)', () => {
       const key = uniqueKey();
 
       await storage.increment(key, 5_000, 10, 5_000, 'default');
-      const ttl = await redis.pttl(`${PREFIX}default:${key}`);
+      const ttl = await redis.pttl(buildKeys(PREFIX, 'default', key).hitsKey);
 
       // -1 means the key exists with no expiry, which is the state a crash
       // between INCR and EXPIRE would leave. That counter would never reset and
@@ -148,7 +148,7 @@ describe('RedisThrottlerStorage (integration)', () => {
 
     it('recovers a counter that somehow lost its expiry', async () => {
       const key = uniqueKey();
-      const hitsKey = `${PREFIX}default:${key}`;
+      const hitsKey = buildKeys(PREFIX, 'default', key).hitsKey;
 
       // Simulate the damaged state directly.
       await redis.set(hitsKey, '3');
