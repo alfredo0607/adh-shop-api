@@ -192,3 +192,81 @@ describe('AllExceptionsFilter', () => {
     expect(captured.body.requestId).toBe('unknown');
   });
 });
+
+describe('AllExceptionsFilter cause reporting', () => {
+  let filter: AllExceptionsFilter;
+  let errorLog: jest.SpyInstance;
+
+  class StoreUnavailable extends DomainError {
+    readonly code = 'CATALOG_UNAVAILABLE';
+    readonly kind = 'UNAVAILABLE' as const;
+  }
+
+  beforeEach(() => {
+    filter = new AllExceptionsFilter();
+    errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+
+  it('logs the underlying cause, not only the translated message', () => {
+    const { host } = buildHost();
+    const cause = new Error('The security token included in the request is invalid');
+
+    filter.catch(
+      new DomainHttpException(
+        new StoreUnavailable('Could not read the catalogue', undefined, cause),
+      ),
+      host,
+    );
+
+    // "Could not read the catalogue" is true and tells an operator nothing.
+    // Diagnosing a missing container credential took far longer than it should
+    // have because this line was absent.
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining('CATALOG_UNAVAILABLE'),
+      expect.stringContaining('security token'),
+    );
+  });
+
+  it('says so explicitly when an adapter recorded no cause', () => {
+    const { host } = buildHost();
+
+    filter.catch(
+      new DomainHttpException(new StoreUnavailable('Could not read the catalogue')),
+      host,
+    );
+
+    // Silence would be ambiguous: no cause looks the same as a cause that was
+    // dropped on the way.
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('no underlying cause recorded'),
+    );
+  });
+
+  it('never puts the cause in the response', () => {
+    const { host, captured } = buildHost();
+    const cause = new Error('table adh-shop-store, key PRODUCT#7, role adh-shop-container-host');
+
+    filter.catch(
+      new DomainHttpException(
+        new StoreUnavailable('Could not read the catalogue', undefined, cause),
+      ),
+      host,
+    );
+
+    const serialised = JSON.stringify(captured.body);
+    expect(serialised).not.toContain('adh-shop-store');
+    expect(serialised).not.toContain('PRODUCT#7');
+    expect(serialised).not.toContain('role');
+  });
+
+  it('stays quiet for a business failure, which is an expected outcome', () => {
+    const { host } = buildHost();
+
+    filter.catch(new DomainHttpException(new OutOfStock('Only 2 units available')), host);
+
+    // Logging these at error level is how an error log becomes noise nobody
+    // reads.
+    expect(errorLog).not.toHaveBeenCalled();
+  });
+});

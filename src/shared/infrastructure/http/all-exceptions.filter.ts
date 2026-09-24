@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
+import { describeCause } from '../../domain/domain-error';
 import { DomainHttpException } from './domain-http.exception';
 
 /** Any status at or above this is the server's fault, and therefore a defect. */
@@ -48,16 +49,50 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const { status, body } = this.describe(exception, requestId);
 
-    if (status >= SERVER_ERROR_THRESHOLD) {
-      // A defect: log the whole thing, including the stack, and keep it out of
-      // the response.
-      this.logger.error(
-        `Unhandled failure on ${request.method} ${request.url} [${requestId}]`,
-        exception instanceof Error ? exception.stack : String(exception),
-      );
-    }
+    this.report(exception, status, requestId, request.method, request.url);
 
     response.status(status).json(body);
+  }
+
+  /**
+   * Decides what, if anything, goes to the log.
+   *
+   * A business failure is not worth a line: out of stock and product-not-found
+   * are outcomes the system is designed to produce, and logging them at error
+   * level trains everyone to ignore the error log. Anything the server is
+   * answerable for gets the full chain.
+   */
+  private report(
+    exception: unknown,
+    status: number,
+    requestId: string,
+    method: string,
+    url: string,
+  ): void {
+    if (status < SERVER_ERROR_THRESHOLD) {
+      return;
+    }
+
+    const where = `${method} ${url} [${requestId}]`;
+
+    if (exception instanceof DomainHttpException) {
+      const { domainError } = exception;
+      const cause = describeCause(domainError.cause);
+
+      // Without the cause this reads "Could not read the catalogue" and stops
+      // there, which is true and tells an operator nothing. The sentence that
+      // explains the failure is always the innermost one.
+      this.logger.error(
+        `${domainError.code} on ${where}: ${domainError.message}`,
+        cause === '' ? 'no underlying cause recorded' : cause,
+      );
+      return;
+    }
+
+    this.logger.error(
+      `Unhandled failure on ${where}`,
+      exception instanceof Error ? describeCause(exception) : String(exception),
+    );
   }
 
   private describe(
