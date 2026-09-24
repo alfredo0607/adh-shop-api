@@ -1,15 +1,21 @@
 import { Module } from '@nestjs/common';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
+import { CLOCK_PORT, type ClockPort } from '../../shared/domain/clock.port';
 import { ENVIRONMENT, type Environment } from '../../shared/infrastructure/config/environment';
 import {
   DYNAMODB_CLIENT,
   createDynamoDbClient,
 } from '../../shared/infrastructure/persistence/dynamodb.provider';
 import { FindProduct } from './application/find-product.usecase';
+import { IMAGE_URL_SIGNER, type ImageUrlSigner } from './application/image-url-signer.port';
 import { ListProducts } from './application/list-products.usecase';
 import { PRODUCT_REPOSITORY, type ProductRepository } from './domain/product.repository';
 import { ProductController } from './infrastructure/http/product.controller';
+import {
+  CloudFrontImageUrlSigner,
+  UnsignedImageUrlSigner,
+} from './infrastructure/images/cloudfront-image-url.signer';
 import { DynamoProductRepository } from './infrastructure/persistence/dynamo-product.repository';
 
 /**
@@ -40,6 +46,27 @@ import { DynamoProductRepository } from './infrastructure/persistence/dynamo-pro
       provide: ListProducts,
       inject: [PRODUCT_REPOSITORY],
       useFactory: (products: ProductRepository): ListProducts => new ListProducts(products),
+    },
+    {
+      provide: IMAGE_URL_SIGNER,
+      inject: [ENVIRONMENT, CLOCK_PORT],
+      useFactory: (environment: Environment, clock: ClockPort): ImageUrlSigner => {
+        const { CDN_DOMAIN, CDN_KEY_PAIR_ID, CDN_PRIVATE_KEY_BASE64 } = environment;
+
+        if (!CDN_DOMAIN || !CDN_KEY_PAIR_ID || !CDN_PRIVATE_KEY_BASE64) {
+          return new UnsignedImageUrlSigner();
+        }
+
+        return new CloudFrontImageUrlSigner(
+          {
+            domain: CDN_DOMAIN,
+            keyPairId: CDN_KEY_PAIR_ID,
+            privateKey: Buffer.from(CDN_PRIVATE_KEY_BASE64, 'base64').toString('utf8'),
+            ttlSeconds: environment.IMAGE_URL_TTL_SECONDS,
+          },
+          clock,
+        );
+      },
     },
     {
       provide: FindProduct,

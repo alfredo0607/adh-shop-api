@@ -12,6 +12,9 @@ const environmentWith = (overrides: NodeJS.ProcessEnv = {}): Environment =>
     PAYMENT_PRIVATE_KEY: 'private',
     PAYMENT_INTEGRITY_SECRET: 'integrity',
     PAYMENT_EVENTS_SECRET: 'events',
+    CDN_DOMAIN: 'cdn.test',
+    CDN_KEY_PAIR_ID: 'K2TESTKEY',
+    CDN_PRIVATE_KEY_BASE64: 'cGVt',
     ...overrides,
   });
 

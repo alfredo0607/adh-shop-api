@@ -11,7 +11,7 @@ export interface ProductSnapshot {
   readonly description: string;
   readonly priceInCents: number;
   readonly currency: string;
-  readonly imageUrl: string;
+  readonly imageKey: string;
   readonly available: number;
   readonly reserved: number;
   readonly version: number;
@@ -37,7 +37,7 @@ export class Product {
     readonly name: string,
     readonly description: string,
     readonly price: Money,
-    readonly imageUrl: string,
+    readonly imageKey: string,
     readonly stock: Stock,
     /**
      * Incremented on every change, and used by the persistence adapter as an
@@ -52,7 +52,7 @@ export class Product {
     name: string;
     description: string;
     price: Money;
-    imageUrl: string;
+    imageKey: string;
     stock: Stock;
     version?: number;
   }): Result<Product, InvalidProduct> {
@@ -70,7 +70,7 @@ export class Product {
         input.name,
         input.description,
         input.price,
-        input.imageUrl,
+        input.imageKey,
         input.stock,
         input.version ?? 0,
       ),
@@ -100,7 +100,7 @@ export class Product {
       description: this.description,
       priceInCents: this.price.amountInCents,
       currency: this.price.currency,
-      imageUrl: this.imageUrl,
+      imageKey: this.imageKey,
       available: this.stock.available,
       reserved: this.stock.reserved,
       version: this.version,
@@ -113,7 +113,7 @@ export class Product {
       this.name,
       this.description,
       this.price,
-      this.imageUrl,
+      this.imageKey,
       stock,
       this.version + 1,
     );

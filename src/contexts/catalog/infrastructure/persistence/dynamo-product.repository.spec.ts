@@ -43,7 +43,7 @@ const storedProduct = {
   description: 'A coffee maker',
   priceInCents: 150_000,
   currency: 'COP',
-  imageUrl: 'https://cdn.test/x.webp',
+  imageKey: 'product/x.webp',
   available: 10,
   reserved: 2,
   version: 4,

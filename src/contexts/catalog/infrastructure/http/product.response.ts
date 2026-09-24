@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+import type { ImageUrlSigner } from '../../application/image-url-signer.port';
 import type { Product } from '../../domain/product';
 import type { ProductPage } from '../../domain/product.repository';
 
@@ -28,7 +29,10 @@ export class ProductResponse {
   @ApiProperty({ example: 'COP' })
   readonly currency!: string;
 
-  @ApiProperty({ example: 'https://cdn.example.com/espresso.webp' })
+  @ApiProperty({
+    example: 'https://cdn.example.com/product/espresso.webp?Expires=…&Signature=…&Key-Pair-Id=…',
+    description: 'Signed and short-lived. Load it as returned; do not store it.',
+  })
   readonly imageUrl!: string;
 
   @ApiProperty({ example: 12, description: 'Units a customer can buy right now' })
@@ -37,7 +41,7 @@ export class ProductResponse {
   @ApiProperty({ example: true })
   readonly isPurchasable!: boolean;
 
-  static from(product: Product): ProductResponse {
+  static from(product: Product, images: ImageUrlSigner): ProductResponse {
     const snapshot = product.toSnapshot();
 
     return {
@@ -46,7 +50,7 @@ export class ProductResponse {
       description: snapshot.description,
       priceInCents: snapshot.priceInCents,
       currency: snapshot.currency,
-      imageUrl: snapshot.imageUrl,
+      imageUrl: images.sign(snapshot.imageKey),
       availableUnits: snapshot.available,
       isPurchasable: product.isPurchasable,
     };
@@ -64,9 +68,9 @@ export class ProductPageResponse {
   })
   readonly nextCursor!: string | null;
 
-  static from(page: ProductPage): ProductPageResponse {
+  static from(page: ProductPage, images: ImageUrlSigner): ProductPageResponse {
     return {
-      items: page.items.map((product) => ProductResponse.from(product)),
+      items: page.items.map((product) => ProductResponse.from(product, images)),
       nextCursor: page.nextCursor,
     };
   }
