@@ -1,0 +1,127 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Only one deployment at a time, and queued rather than cancelled. Cancelling a
+# half-finished deployment would leave the blue/green switch in an unknown
+# state; waiting costs a few minutes and leaves it deterministic.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  # Required to request the OIDC token. There is no AWS key in this repository:
+  # GitHub signs a token describing which repo and which ref is running, AWS
+  # verifies it, and the role's trust policy decides whether to accept.
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build, push and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: deploy-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Tagged with the commit, never `latest`. A deployment has to name the
+          # exact build it is releasing, and a rollback has to be able to name a
+          # previous one — neither is possible when the tag moves.
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      # Deployment runs through Session Manager rather than SSH. No private key
+      # is stored in this repository, no inbound port is required, and every
+      # command is recorded in CloudTrail against the role that ran it.
+      - name: Release
+        id: release
+        run: |
+          set -euo pipefail
+
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+          echo "Releasing $IMAGE"
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.INSTANCE_ID }}" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy ${{ github.sha }}" \
+            --parameters "commands=[\"sudo -u ec2-user /opt/adh-shop/deploy.sh '$IMAGE' '${{ vars.APP_NAME }}'\"]" \
+            --query 'Command.CommandId' --output text)
+
+          echo "command=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+          echo "SSM command $COMMAND_ID"
+
+          # deploy.sh health-checks the new container before switching traffic,
+          # so this waits for the real outcome rather than for the command to be
+          # accepted.
+          for attempt in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "${{ vars.INSTANCE_ID }}" \
+              --query 'Status' --output text 2>/dev/null || echo Pending)
+
+            case "$STATUS" in
+              Success) echo "Deployment succeeded"; exit 0 ;;
+              Failed|Cancelled|TimedOut) echo "Deployment $STATUS"; exit 1 ;;
+            esac
+
+            sleep 5
+          done
+
+          echo "Timed out waiting for the deployment to report back"
+          exit 1
+
+      # The script's own output is the only place the reason for a failure
+      # appears — the previous version is still serving, and knowing why the new
+      # one was rejected is the whole point of looking.
+      - name: Deployment log
+        if: always()
+        run: |
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.release.outputs.command }}" \
+            --instance-id "${{ vars.INSTANCE_ID }}" \
+            --query 'StandardOutputContent' --output text || true
+
+          echo "--- stderr ---"
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.release.outputs.command }}" \
+            --instance-id "${{ vars.INSTANCE_ID }}" \
+            --query 'StandardErrorContent' --output text || true
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "### Deployed"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Image | \`${{ vars.ECR_REPOSITORY }}:${{ github.sha }}\` |"
+            echo "| Instance | \`${{ vars.INSTANCE_ID }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
