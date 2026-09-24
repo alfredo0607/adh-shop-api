@@ -1,0 +1,17 @@
+# Normaliza a LF dentro del repositorio. El codigo se compila y ejecuta en
+# contenedores Linux: un CRLF filtrado rompe shebangs y scripts de shell.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+
+# El lockfile se versiona pero no ensucia los diffs de las revisiones.
+pnpm-lock.yaml -diff linguist-generated=true
+
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary

@@ -1,0 +1,46 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Artefactos de compilacion
+dist/
+build/
+*.tsbuildinfo
+
+# Cobertura y reportes de test
+coverage/
+junit.xml
+
+# Secretos: este repositorio es publico. Las llaves de la pasarela de pago y
+# cualquier credencial viajan por variables de entorno o Parameter Store,
+# nunca por el arbol de trabajo. Solo se versiona la plantilla de ejemplo.
+.env
+.env.*
+!.env.example
+
+# Credenciales y material criptografico
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Datos locales de DynamoDB Local
+.dynamodb/
+shared-local-instance.db
+
+# Entorno del editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini

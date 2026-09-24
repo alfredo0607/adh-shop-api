@@ -1,0 +1,10 @@
+# Declara este repositorio como raiz de workspace. Sin este archivo pnpm
+# asciende el arbol de directorios y puede resolver contra un workspace ajeno.
+packages:
+  - .
+
+# Lista blanca explicita de scripts de instalacion. Todo paquete que quiera
+# ejecutar codigo durante `pnpm install` debe aparecer aqui de forma consciente.
+# @scarf/scarf es telemetria que arrastra el ecosistema Nest: denegado.
+allowBuilds:
+  '@scarf/scarf': false
