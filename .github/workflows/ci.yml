@@ -142,6 +142,9 @@ jobs:
             -e PAYMENT_PRIVATE_KEY=ci \
             -e PAYMENT_INTEGRITY_SECRET=ci \
             -e PAYMENT_EVENTS_SECRET=ci \
+            -e CDN_DOMAIN=cdn.invalid \
+            -e CDN_KEY_PAIR_ID=ci \
+            -e CDN_PRIVATE_KEY_BASE64=Y2k= \
             adh-shop-api:${{ github.sha }}
 
           for attempt in $(seq 1 30); do
