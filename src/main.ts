@@ -1,4 +1,4 @@
-import { Logger, RequestMethod, ValidationPipe, VersioningType } from '@nestjs/common';
+import { HttpStatus, Logger, RequestMethod, ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -74,6 +74,13 @@ const bootstrap = async (): Promise<void> => {
       forbidNonWhitelisted: true,
       transform: true,
       transformOptions: { enableImplicitConversion: false },
+
+      // 422 rather than the framework's default 400. A payload that parses but
+      // breaks a constraint is well formed and semantically wrong, which is
+      // exactly the distinction the two codes carry. A genuinely unparseable
+      // body never reaches this pipe: the body parser rejects it with 400
+      // first, so both cases keep their correct meaning.
+      errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
     }),
   );
 

@@ -21,6 +21,10 @@ const config: Config = {
     // Ports and types: interfaces that vanish at compile time.
     '!src/**/*.port.ts',
     '!src/**/*.d.ts',
+    // Test helpers are test code. Counting them inflates the number with
+    // fixtures that exist only to support the tests measuring it.
+    '!src/**/__fixtures__/**',
+    '!src/**/*.fixture.ts',
   ],
   coverageDirectory: '<rootDir>/coverage',
   coverageReporters: ['text', 'text-summary', 'lcov', 'json-summary'],
