@@ -1,4 +1,4 @@
-import type { Result } from './result';
+import type { NotPromise, Result } from './result';
 import { err, ok } from './result';
 
 /**
@@ -50,25 +50,39 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return new ResultAsync<T, E>(Promise.resolve(err<E, T>(error)));
   }
 
-  map<U>(fn: (value: T) => U | Promise<U>): ResultAsync<U, E> {
+  /**
+   * Transforms the value on the happy path.
+   *
+   * `fn` is deliberately synchronous. An asynchronous transformation is I/O, and
+   * all I/O must enter the railway through `fromPromise` so that its failure is
+   * translated into a domain error at the point it happens. Accepting an async
+   * `fn` here would let a rejection escape the chain unnoticed.
+   */
+  map<U>(fn: (value: T) => U & NotPromise<U>): ResultAsync<U, E> {
     return new ResultAsync<U, E>(
-      this.inner.then(async (result) =>
-        result.isErr() ? err<E, U>(result.error) : ok<U, E>(await fn(result.value)),
+      this.inner.then((result) =>
+        result.isErr() ? err<E, U>(result.error) : ok<U, E>(fn(result.value)),
       ),
     );
   }
 
-  mapErr<F>(fn: (error: E) => F | Promise<F>): ResultAsync<T, F> {
+  mapErr<F>(fn: (error: E) => F & NotPromise<F>): ResultAsync<T, F> {
     return new ResultAsync<T, F>(
-      this.inner.then(async (result) =>
-        result.isOk() ? ok<T, F>(result.value) : err<F, T>(await fn(result.error)),
+      this.inner.then((result) =>
+        result.isOk() ? ok<T, F>(result.value) : err<F, T>(fn(result.error)),
       ),
     );
   }
 
-  andThen<U, F>(
-    fn: (value: T) => Result<U, F> | ResultAsync<U, F> | Promise<Result<U, F>>,
-  ): ResultAsync<U, E | F> {
+  /**
+   * Chains an operation that may also fail.
+   *
+   * Accepts `Result` and `ResultAsync`, but not a bare `Promise<Result>`: a
+   * promise can reject, and a rejection would bypass the railway. A repository
+   * returning `ResultAsync` has already been through `fromPromise`, which forces
+   * its failure mode to be declared.
+   */
+  andThen<U, F>(fn: (value: T) => Result<U, F> | ResultAsync<U, F>): ResultAsync<U, E | F> {
     return new ResultAsync<U, E | F>(
       this.inner.then(async (result) =>
         result.isErr() ? err<E | F, U>(result.error) : await fn(result.value),
@@ -76,12 +90,17 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     );
   }
 
-  /** Side effect on the happy path without altering the value in flight. */
-  tap(fn: (value: T) => void | Promise<void>): ResultAsync<T, E> {
+  /**
+   * Side effect on the happy path without altering the value in flight.
+   *
+   * Synchronous for the same reason as `map`. An asynchronous side effect is I/O
+   * and belongs in `andThen`, where its failure is part of the chain.
+   */
+  tap<R>(fn: (value: T) => R & NotPromise<R>): ResultAsync<T, E> {
     return new ResultAsync<T, E>(
-      this.inner.then(async (result) => {
+      this.inner.then((result) => {
         if (result.isOk()) {
-          await fn(result.value);
+          fn(result.value);
         }
         return result;
       }),

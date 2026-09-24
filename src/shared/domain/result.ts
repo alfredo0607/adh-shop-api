@@ -12,6 +12,15 @@
 
 export type Result<T, E> = Ok<T, E> | Err<T, E>;
 
+/**
+ * Collapses to `never` when given a promise type.
+ *
+ * Used to constrain combinators so that passing an `async` function becomes a
+ * compile error rather than silently producing a `Result` wrapping a promise.
+ * The railway's guarantee is enforced by the type system, at zero runtime cost.
+ */
+export type NotPromise<T> = T extends PromiseLike<unknown> ? never : T;
+
 export class Ok<T, E> {
   readonly _tag = 'Ok' as const;
 
@@ -94,6 +103,29 @@ export class Err<T, E> {
 export const ok = <T, E = never>(value: T): Result<T, E> => new Ok<T, E>(value);
 
 export const err = <E, T = never>(error: E): Result<T, E> => new Err<T, E>(error);
+
+/**
+ * Runs a partial function — one that may throw — and converts a throw into an
+ * `Err`, translating it through `onThrow`.
+ *
+ * This is the only sanctioned way to bring a throwing function onto the railway.
+ * The combinators (`map`, `andThen`, `tap`) deliberately do not catch: a throw
+ * inside a total function is a defect, and defects must stay loud rather than be
+ * silently reclassified as business failures. Wrapping the call here makes the
+ * conversion visible at the point where it actually happens.
+ *
+ *   const parsed = fromThrowable(
+ *     () => JSON.parse(raw) as Metadata,
+ *     (cause) => new MalformedMetadata(cause),
+ *   );
+ */
+export const fromThrowable = <T, E>(fn: () => T, onThrow: (cause: unknown) => E): Result<T, E> => {
+  try {
+    return new Ok<T, E>(fn());
+  } catch (cause) {
+    return new Err<T, E>(onThrow(cause));
+  }
+};
 
 /**
  * Collapses a list of results into a result of list.

@@ -41,11 +41,8 @@ describe('ResultAsync', () => {
   });
 
   describe('map', () => {
-    it('transforms the value and accepts asynchronous functions', async () => {
-      const result = await ResultAsync.ok<number, string>(3).map(async (n) => {
-        await Promise.resolve();
-        return n * 2;
-      });
+    it('transforms the value on the happy path', async () => {
+      const result = await ResultAsync.ok<number, string>(3).map((n) => n * 2);
 
       expect(result).toEqual(ok(6));
     });
@@ -92,9 +89,9 @@ describe('ResultAsync', () => {
       expect(result).toEqual(ok(12));
     });
 
-    it('chains a promise of Result', async () => {
+    it('chains asynchronous work admitted through fromPromise', async () => {
       const result = await ResultAsync.ok<number, string>(4).andThen((n) =>
-        Promise.resolve(ok<number, string>(n - 1)),
+        ResultAsync.fromPromise(Promise.resolve(n - 1), () => 'unreachable'),
       );
 
       expect(result).toEqual(ok(3));
@@ -135,14 +132,11 @@ describe('ResultAsync', () => {
       expect(result).toEqual(ok(9));
     });
 
-    it('awaits an asynchronous effect before continuing', async () => {
+    it('runs the effect before the next step in the chain', async () => {
       const order: string[] = [];
 
       await ResultAsync.ok<number, string>(1)
-        .tap(async () => {
-          await Promise.resolve();
-          order.push('effect');
-        })
+        .tap(() => order.push('effect'))
         .map(() => order.push('next'));
 
       expect(order).toEqual(['effect', 'next']);
@@ -173,6 +167,55 @@ describe('ResultAsync', () => {
       const result: Result<number, string> = await ResultAsync.ok<number, string>(1);
 
       expect(result.isOk()).toBe(true);
+    });
+  });
+
+  describe('defect boundary', () => {
+    // These assertions are enforced by the compiler, not at runtime. Each
+    // `@ts-expect-error` fails the build if the line below it ever stops being a
+    // type error — that is, if the unsafe path is ever reopened. Narrowing these
+    // signatures is what keeps a rejected promise from escaping the railway and
+    // surfacing as an HTTP 500 instead of a typed domain error.
+
+    it('refuses an async function in map, because asynchronous work is I/O', () => {
+      const chain = ResultAsync.ok<number, string>(1);
+
+      // @ts-expect-error map is synchronous: I/O must enter through fromPromise
+      void chain.map(async (n) => {
+        await Promise.resolve();
+        return n * 2;
+      });
+
+      expect(chain).toBeInstanceOf(ResultAsync);
+    });
+
+    it('refuses a bare promise of Result in andThen, because a promise can reject', () => {
+      const chain = ResultAsync.ok<number, string>(1);
+
+      // @ts-expect-error andThen accepts Result or ResultAsync, never a raw promise
+      void chain.andThen((n) => Promise.resolve(ok<number, string>(n)));
+
+      expect(chain).toBeInstanceOf(ResultAsync);
+    });
+
+    it('refuses an async side effect in tap, which belongs in andThen', () => {
+      const chain = ResultAsync.ok<number, string>(1);
+
+      // @ts-expect-error tap is synchronous: a failing side effect belongs in the chain
+      void chain.tap(async () => {
+        await Promise.resolve();
+      });
+
+      expect(chain).toBeInstanceOf(ResultAsync);
+    });
+
+    it('admits a rejecting promise through fromPromise, translating it to an Err', () => {
+      const chain = ResultAsync.fromPromise(
+        Promise.reject(new Error('ECONNRESET')),
+        (cause) => `gateway unreachable: ${String(cause)}`,
+      );
+
+      return expect(chain).resolves.toEqual(err('gateway unreachable: Error: ECONNRESET'));
     });
   });
 });

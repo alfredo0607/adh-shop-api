@@ -1,4 +1,4 @@
-import { combine, combineAllErrors, err, ok, type Result } from './result';
+import { combine, combineAllErrors, err, fromThrowable, ok, type Result } from './result';
 
 describe('Result', () => {
   describe('construction and discrimination', () => {
@@ -152,6 +152,41 @@ describe('Result', () => {
 
     it('gathers the values when there is no error at all', () => {
       expect(combineAllErrors([ok<number, string>(1), ok<number, string>(2)])).toEqual(ok([1, 2]));
+    });
+  });
+
+  describe('fromThrowable', () => {
+    it('returns the value when the function does not throw', () => {
+      expect(fromThrowable(() => JSON.parse('{"a":1}') as unknown, () => 'malformed')).toEqual(
+        ok({ a: 1 }),
+      );
+    });
+
+    it('converts a throw into an Err translated by onThrow', () => {
+      const result = fromThrowable(
+        () => JSON.parse('{bad') as unknown,
+        () => 'malformed metadata',
+      );
+
+      expect(result).toEqual(err('malformed metadata'));
+    });
+
+    it('hands the original cause to onThrow so it can be logged', () => {
+      const onThrow = jest.fn(() => 'translated');
+
+      fromThrowable(() => {
+        throw new RangeError('index out of bounds');
+      }, onThrow);
+
+      expect(onThrow).toHaveBeenCalledWith(expect.any(RangeError));
+    });
+
+    it('is the only sanctioned way to admit a throwing function, since map does not catch', () => {
+      // Guards the defect boundary: combinators deliberately do not catch, so a
+      // throw inside map stays a defect instead of being reclassified as a
+      // business failure. If this ever stops throwing, that decision has been
+      // silently reversed.
+      expect(() => ok<string, string>('{bad').map((raw) => JSON.parse(raw) as unknown)).toThrow();
     });
   });
 });
