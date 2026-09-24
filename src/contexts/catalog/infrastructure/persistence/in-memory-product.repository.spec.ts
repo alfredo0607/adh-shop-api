@@ -1,4 +1,4 @@
-import { aProduct } from '../../test/product.fixture';
+import { aProduct } from '../../__fixtures__/product.fixture';
 import { InMemoryProductRepository } from './in-memory-product.repository';
 
 describe('InMemoryProductRepository', () => {

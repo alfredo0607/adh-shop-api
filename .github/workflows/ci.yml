@@ -67,6 +67,13 @@ jobs:
       - name: Test with coverage
         run: pnpm test:cov
 
+      # The image is built in the container job, but the artifact's contents are
+      # checked here where the toolchain already is.
+      - name: Build artifact is clean
+        run: |
+          pnpm build
+          ./scripts/check-build-artifact.sh
+
       - name: Coverage summary
         if: always()
         run: |

@@ -7,7 +7,7 @@ import request from 'supertest';
 import { AllExceptionsFilter } from '../../../../shared/infrastructure/http/all-exceptions.filter';
 import { FindProduct } from '../../application/find-product.usecase';
 import { ListProducts } from '../../application/list-products.usecase';
-import { aProduct } from '../../test/product.fixture';
+import { aProduct } from '../../__fixtures__/product.fixture';
 import { InMemoryProductRepository } from '../persistence/in-memory-product.repository';
 import { ProductController } from './product.controller';
 

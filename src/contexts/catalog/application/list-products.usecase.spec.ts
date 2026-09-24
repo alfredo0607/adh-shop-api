@@ -1,5 +1,5 @@
 import { InMemoryProductRepository } from '../infrastructure/persistence/in-memory-product.repository';
-import { aProduct } from '../test/product.fixture';
+import { aProduct } from '../__fixtures__/product.fixture';
 import { ListProducts } from './list-products.usecase';
 
 describe('ListProducts', () => {
