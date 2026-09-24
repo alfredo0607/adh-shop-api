@@ -46,8 +46,8 @@ describe('RedisThrottlerStorage', () => {
       await storage.increment('client', 60_000, 100, 30_000, 'default');
 
       expect(script).toHaveBeenCalledWith(
-        'p:default:client',
-        'p:default:client:blocked',
+        'p:{default:client}',
+        'p:{default:client}:blocked',
         '60000',
         '100',
         '30000',
@@ -63,13 +63,46 @@ describe('RedisThrottlerStorage', () => {
       await storage.increment('1.2.3.4', 1_000, 5, 1_000, 'strict');
 
       expect(script).toHaveBeenCalledWith(
-        'ratelimit:strict:1.2.3.4',
-        'ratelimit:strict:1.2.3.4:blocked',
+        'ratelimit:{strict:1.2.3.4}',
+        'ratelimit:{strict:1.2.3.4}:blocked',
         expect.any(String),
         expect.any(String),
         expect.any(String),
       );
     });
+
+    // The hash tag is what a clustered Redis reads to choose a slot: the text
+    // between the first brace and the next one. Both keys must expose the same
+    // one, or the script is refused with CROSSSLOT and the limiter fails open —
+    // which is indistinguishable, from outside, from having no limiter at all.
+    const hashTag = (key: string): string => /\{([^}]*)\}/.exec(key)?.[1] ?? '';
+
+    it('gives both keys the same hash tag, so a clustered server accepts the script', async () => {
+      const script: Script = jest.fn().mockResolvedValue([1, 1_000, 0, 0]);
+      const storage = new RedisThrottlerStorage(buildRedis(script).redis, 'ratelimit:', true);
+
+      await storage.increment('1.2.3.4', 1_000, 5, 1_000, 'strict');
+
+      const [hitsKey, blockKey] = script.mock.calls[0] as [string, string];
+
+      expect(hashTag(hitsKey)).toBe('strict:1.2.3.4');
+      expect(hashTag(blockKey)).toBe(hashTag(hitsKey));
+    });
+
+    it('keeps the pair together when the tracker itself contains a brace', async () => {
+      const script: Script = jest.fn().mockResolvedValue([1, 1_000, 0, 0]);
+      const storage = new RedisThrottlerStorage(buildRedis(script).redis, 'ratelimit:', true);
+
+      // A brace inside the identity would close the tag early and split the
+      // keys across slots again.
+      await storage.increment('cli}ent{x', 1_000, 5, 1_000, 'strict');
+
+      const [hitsKey, blockKey] = script.mock.calls[0] as [string, string];
+
+      expect(hashTag(hitsKey)).toBe('strict:clientx');
+      expect(hashTag(blockKey)).toBe(hashTag(hitsKey));
+    });
+
   });
 
   describe('when the store is unreachable', () => {

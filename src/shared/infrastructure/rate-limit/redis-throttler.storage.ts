@@ -61,6 +61,33 @@ interface RedisWithIncrement extends Redis {
   ): Promise<ScriptResult>;
 }
 
+/**
+ * Builds the pair of key names for one caller, tied to the same hash slot.
+ *
+ * A clustered Redis refuses any command touching two keys that live in
+ * different slots — `CROSSSLOT Keys in request don't hash to the same slot` —
+ * and the script touches both the counter and the block marker. Wrapping the
+ * shared part in braces makes only that substring decide the slot, so the two
+ * keys are guaranteed to land together however the cluster is resharded.
+ *
+ * This is invisible on a standalone server, which accepts the same script
+ * regardless. The limiter therefore passes locally and fails in production,
+ * where failing open means it quietly stops limiting anything.
+ *
+ * Braces are stripped from the caller's own identity because a stray one would
+ * close the tag early and split the pair again — the same silent failure, found
+ * the same expensive way. Two callers sharing a bucket is the lesser harm.
+ */
+export const buildKeys = (
+  keyPrefix: string,
+  throttlerName: string,
+  key: string,
+): { hitsKey: string; blockKey: string } => {
+  const hitsKey = `${keyPrefix}{${throttlerName}:${key.replace(/[{}]/g, '')}}`;
+
+  return { hitsKey, blockKey: `${hitsKey}:blocked` };
+};
+
 @Injectable()
 export class RedisThrottlerStorage implements ThrottlerStorage {
   private readonly logger = new Logger(RedisThrottlerStorage.name);
@@ -85,8 +112,7 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
     blockDuration: number,
     throttlerName: string,
   ): Promise<ThrottlerStorageRecord> {
-    const hitsKey = `${this.keyPrefix}${throttlerName}:${key}`;
-    const blockKey = `${hitsKey}:blocked`;
+    const { hitsKey, blockKey } = buildKeys(this.keyPrefix, throttlerName, key);
 
     try {
       const [totalHits, ttlMs, blocked, blockMs] = await this.redis.rateLimitIncrement(
