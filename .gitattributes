@@ -1,0 +1,17 @@
+# Normalise to LF inside the repository. The code is built and executed in
+# Linux containers, where a leaked CRLF breaks shebangs and shell scripts.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+
+# The lockfile is versioned but should not clutter review diffs.
+pnpm-lock.yaml -diff linguist-generated=true
+
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary

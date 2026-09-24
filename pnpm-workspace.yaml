@@ -1,0 +1,10 @@
+# Declares this repository as its own workspace root. Without this file pnpm
+# walks up the directory tree and may resolve against an unrelated workspace.
+packages:
+  - .
+
+# Explicit allow-list for install scripts. Any package that wants to execute
+# code during `pnpm install` must be listed here as a conscious decision.
+# @scarf/scarf is telemetry pulled in by the Nest ecosystem: denied.
+allowBuilds:
+  '@scarf/scarf': false

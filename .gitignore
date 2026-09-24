@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Coverage and test reports
+coverage/
+junit.xml
+
+# Secrets: this repository is public. Payment gateway keys and any other
+# credential travel through environment variables or Parameter Store, never
+# through the working tree. Only the example template is versioned.
+.env
+.env.*
+!.env.example
+
+# Credentials and key material
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# DynamoDB Local data
+.dynamodb/
+shared-local-instance.db
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
