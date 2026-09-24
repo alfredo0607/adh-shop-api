@@ -46,11 +46,13 @@ export class CatalogUnavailable extends DomainError {
   readonly code = 'CATALOG_UNAVAILABLE';
   readonly kind = 'UNAVAILABLE' as const;
 
-  constructor(
-    message: string,
-    readonly cause?: unknown,
-  ) {
-    super(message);
+  constructor(message: string, cause?: unknown) {
+    // The cause reaches the base class, which is what the exception filter
+    // reads. Holding it in a field of its own left it visible to nobody: the
+    // log said the catalogue could not be read and never said why, which is
+    // how a missing container credential looked like a permissions problem
+    // for far longer than it should have.
+    super(message, undefined, cause);
   }
 }
 
