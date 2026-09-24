@@ -76,7 +76,9 @@ describe('ResultAsync', () => {
 
   describe('andThen', () => {
     it('chains a synchronous Result', async () => {
-      const result = await ResultAsync.ok<number, string>(4).andThen((n) => ok<number, string>(n + 1));
+      const result = await ResultAsync.ok<number, string>(4).andThen((n) =>
+        ok<number, string>(n + 1),
+      );
 
       expect(result).toEqual(ok(5));
     });

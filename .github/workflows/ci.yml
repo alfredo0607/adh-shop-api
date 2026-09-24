@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least privilege: this workflow only reads the repository.
+permissions:
+  contents: read
+
+# A new push supersedes the previous run on the same branch. Without this, a
+# series of quick pushes queues runs that are already obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, types, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # --frozen-lockfile fails if package.json and the lockfile disagree, so a
+      # dependency can never be added without its lockfile entry being reviewed.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit -p tsconfig.json
+
+      # The 80% threshold lives in jest.config.ts, so this step fails on its own
+      # if coverage regresses. No separate gate to keep in sync.
+      - name: Test with coverage
+        run: pnpm test:cov
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '### Coverage'
+            echo ''
+            echo '| Metric | Covered | Total | % |'
+            echo '| --- | ---: | ---: | ---: |'
+            node -e "
+              const s = require('./coverage/coverage-summary.json').total;
+              for (const k of ['statements','branches','functions','lines'])
+                console.log(\`| \${k} | \${s[k].covered} | \${s[k].total} | \${s[k].pct}% |\`);
+            "
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Production tree only. A vulnerability in a build tool does not ship to
+      # users, and failing on it would train everyone to ignore this job.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
+  container:
+    name: Container builds and starts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: adh-shop-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A green compile proves nothing about whether the artifact runs: with no
+      # entry point, `pnpm build` still exits 0. This step is the real gate.
+      - name: Start the container and probe it
+        run: |
+          docker run -d --name api -p 3000:3000 \
+            -e NODE_ENV=production \
+            -e AWS_REGION=us-east-1 \
+            -e DYNAMODB_TABLE_NAME=ci \
+            -e PAYMENT_API_URL=https://gateway.invalid/v1 \
+            -e PAYMENT_PUBLIC_KEY=ci \
+            -e PAYMENT_PRIVATE_KEY=ci \
+            -e PAYMENT_INTEGRITY_SECRET=ci \
+            -e PAYMENT_EVENTS_SECRET=ci \
+            adh-shop-api:${{ github.sha }}
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/health > /dev/null; then
+              echo "Container answered /health after ${attempt} attempt(s)"
+              curl -fsS http://127.0.0.1:3000/ready
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Container never became healthy. Logs:"
+          docker logs api
+          exit 1
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs api || true

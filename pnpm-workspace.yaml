@@ -8,3 +8,8 @@ packages:
 # @scarf/scarf is telemetry pulled in by the Nest ecosystem: denied.
 allowBuilds:
   '@scarf/scarf': false
+
+# multer arrives transitively through @nestjs/platform-express and carries three
+# high-severity denial-of-service advisories below 2.3.0. Audit finding B-1.
+overrides:
+  multer: '>=2.3.0'

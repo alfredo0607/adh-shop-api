@@ -131,7 +131,9 @@ describe('Result', () => {
     });
 
     it('stops at the first error and discards the rest', () => {
-      expect(combine([ok(1), err<string, number>('a'), err<string, number>('b')])).toEqual(err('a'));
+      expect(combine([ok(1), err<string, number>('a'), err<string, number>('b')])).toEqual(
+        err('a'),
+      );
     });
 
     it('returns an empty list for an empty input', () => {
@@ -157,9 +159,12 @@ describe('Result', () => {
 
   describe('fromThrowable', () => {
     it('returns the value when the function does not throw', () => {
-      expect(fromThrowable(() => JSON.parse('{"a":1}') as unknown, () => 'malformed')).toEqual(
-        ok({ a: 1 }),
-      );
+      expect(
+        fromThrowable(
+          () => JSON.parse('{"a":1}') as unknown,
+          () => 'malformed',
+        ),
+      ).toEqual(ok({ a: 1 }));
     });
 
     it('converts a throw into an Err translated by onThrow', () => {
