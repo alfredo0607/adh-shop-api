@@ -23,7 +23,7 @@ expect(repository.save).toHaveBeenCalled();
 // Strong — fails if the invariant breaks
 const result = product.reserve(5);
 expect(result.isErr()).toBe(true);
-expect(product.availableUnits).toBe(2);   // unchanged after a rejected reservation
+expect(product.availableUnits).toBe(2); // unchanged after a rejected reservation
 ```
 
 A test that asserts which methods were called breaks on every refactor and catches no
@@ -42,7 +42,7 @@ const result = await ResultAsync.ok(1)
   .andThen(() => ResultAsync.err('out of stock'))
   .andThen(charge);
 
-expect(charge).not.toHaveBeenCalled();   // this is the real assertion
+expect(charge).not.toHaveBeenCalled(); // this is the real assertion
 ```
 
 Without the spy, a chain that kept charging after running out of stock would still
@@ -55,8 +55,12 @@ return the right error and the test would pass. The bug would ship.
 ```typescript
 class InMemoryProductRepository implements ProductRepository {
   private readonly items = new Map<string, Product>();
-  findById(id: ProductId) { /* ... */ }
-  save(product: Product) { /* ... */ }
+  findById(id: ProductId) {
+    /* ... */
+  }
+  save(product: Product) {
+    /* ... */
+  }
 }
 ```
 
@@ -64,7 +68,7 @@ One in-memory adapter serves every use case test, runs in milliseconds, needs no
 Docker, and — unlike a mock — actually behaves like a repository, so a use case that
 saves twice or reads stale data fails the test.
 
-Mocks are for asserting that something was *not* called, or for simulating failures an
+Mocks are for asserting that something was _not_ called, or for simulating failures an
 in-memory double cannot produce (a network timeout).
 
 **Inject `ClockPort` and `IdGeneratorPort`** rather than stubbing globals. Tests that

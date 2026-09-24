@@ -77,15 +77,15 @@ review.
 
 ## Branch protection on `main`
 
-| Rule | Setting |
-| --- | --- |
-| Pull request required | Yes |
-| Approvals required | 0 — a solo author cannot approve their own PR |
-| Linear history | Required |
-| Force push | Blocked |
-| Branch deletion | Blocked |
-| Conversation resolution | Required |
-| Status checks | Required once CI exists |
+| Rule                    | Setting                                       |
+| ----------------------- | --------------------------------------------- |
+| Pull request required   | Yes                                           |
+| Approvals required      | 0 — a solo author cannot approve their own PR |
+| Linear history          | Required                                      |
+| Force push              | Blocked                                       |
+| Branch deletion         | Blocked                                       |
+| Conversation resolution | Required                                      |
+| Status checks           | Required once CI exists                       |
 
 Approvals are set to zero deliberately so a single maintainer is not locked out. On a
 team, raise it to 1 and require a code owner.

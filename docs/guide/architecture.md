@@ -25,11 +25,11 @@ layer. If you cannot name a context without using the word "manager", "helper" o
 
 **Dependencies point inwards. The domain depends on nothing.**
 
-| Layer | May import |
-| --- | --- |
-| `domain` | Other files in its own `domain`, `shared/domain` |
-| `application` | Its own `domain`, `shared/domain` |
-| `infrastructure` | Everything |
+| Layer            | May import                                       |
+| ---------------- | ------------------------------------------------ |
+| `domain`         | Other files in its own `domain`, `shared/domain` |
+| `application`    | Its own `domain`, `shared/domain`                |
+| `infrastructure` | Everything                                       |
 
 This is enforced by ESLint, not by convention. `eslint.config.mjs` rejects imports of
 `@nestjs/*`, `@aws-sdk/*`, `**/infrastructure/**` and `**/application/**` from any
@@ -55,7 +55,9 @@ export interface ProductRepository {
 
 ```typescript
 // infrastructure/dynamo-product.repository.ts — an ADAPTER
-export class DynamoProductRepository implements ProductRepository { /* ... */ }
+export class DynamoProductRepository implements ProductRepository {
+  /* ... */
+}
 ```
 
 **Name ports after the need, never after the technology.** `PaymentGatewayPort`, not
@@ -105,10 +107,10 @@ outcomes.
 
 **The distinction that matters:**
 
-| Situation | Mechanism |
-| --- | --- |
-| Out of stock, card declined, product not found | `Err` — an expected outcome |
-| Null dereference, malformed internal state, bug | `throw` — a defect |
+| Situation                                       | Mechanism                   |
+| ----------------------------------------------- | --------------------------- |
+| Out of stock, card declined, product not found  | `Err` — an expected outcome |
+| Null dereference, malformed internal state, bug | `throw` — a defect          |
 
 A declined payment is not an exception; it is one of the two things that can happen
 when you charge a card. Modelling it as a value means the compiler forces the caller to
@@ -120,10 +122,7 @@ enters the railway through `ResultAsync.fromPromise`, which takes an explicit ha
 translating the failure into a domain error:
 
 ```typescript
-ResultAsync.fromPromise(
-  this.client.send(command),
-  (cause) => new PersistenceFailure(cause),
-);
+ResultAsync.fromPromise(this.client.send(command), (cause) => new PersistenceFailure(cause));
 ```
 
 Bypassing this — writing `.map(async (x) => this.client.send(x))` — compiles and looks

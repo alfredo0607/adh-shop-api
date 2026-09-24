@@ -28,7 +28,7 @@ PATCH  /api/v1/deliveries/:id              partial update
 The two mistakes that matter most:
 
 **1. A business failure is not an HTTP error.** A declined card means the request was
-understood, processed and answered correctly — the *payment* failed, not the *request*.
+understood, processed and answered correctly — the _payment_ failed, not the _request_.
 
 ```
 POST /transactions/:id/payment
@@ -42,21 +42,21 @@ which is exactly wrong. Reserve `5xx` for faults that are genuinely the server's
 accepted-but-not-finished operation returns `202`. A successful delete with no body
 returns `204`.
 
-| Code | Use for |
-| --- | --- |
-| 200 | Successful read or update returning a body |
-| 201 | Resource created — include `Location` |
-| 202 | Accepted, outcome not yet final (async gateway call) |
-| 204 | Success with no body |
-| 400 | Malformed request — unparseable body, wrong types |
-| 401 | Not authenticated |
-| 403 | Authenticated but not permitted |
-| 404 | Resource does not exist, or must not be revealed to this caller |
-| 409 | Conflict with current state — out of stock, already paid |
-| 412 | `If-Match` precondition failed (optimistic concurrency) |
-| 422 | Well-formed but semantically invalid — expiry date in the past |
-| 429 | Rate limited — include `Retry-After` |
-| 500 | Unhandled server fault. Never deliberate. |
+| Code | Use for                                                         |
+| ---- | --------------------------------------------------------------- |
+| 200  | Successful read or update returning a body                      |
+| 201  | Resource created — include `Location`                           |
+| 202  | Accepted, outcome not yet final (async gateway call)            |
+| 204  | Success with no body                                            |
+| 400  | Malformed request — unparseable body, wrong types               |
+| 401  | Not authenticated                                               |
+| 403  | Authenticated but not permitted                                 |
+| 404  | Resource does not exist, or must not be revealed to this caller |
+| 409  | Conflict with current state — out of stock, already paid        |
+| 412  | `If-Match` precondition failed (optimistic concurrency)         |
+| 422  | Well-formed but semantically invalid — expiry date in the past  |
+| 429  | Rate limited — include `Retry-After`                            |
+| 500  | Unhandled server fault. Never deliberate.                       |
 
 `400` vs `422`: could the request be parsed? If not, `400`. If it parsed but the values
 are not acceptable, `422`.
@@ -64,7 +64,7 @@ are not acceptable, `422`.
 ## Idempotency
 
 **Any endpoint that moves money must be idempotent.** A client that times out and
-retries must not be charged twice, and clients *will* retry.
+retries must not be charged twice, and clients _will_ retry.
 
 ```
 POST /api/v1/transactions/:id/payment
@@ -79,7 +79,7 @@ the expected case, not the edge case.
 
 ## Never trust the client with amounts
 
-The client may send what it *expects* to pay. The server recalculates the total from
+The client may send what it _expects_ to pay. The server recalculates the total from
 its own prices and fees, and rejects the request with `422` if they disagree.
 
 If the server accepts a client-supplied amount, the product costs whatever the buyer
@@ -127,16 +127,16 @@ Validate at the HTTP boundary with `ValidationPipe` configured as:
 
 ```typescript
 new ValidationPipe({
-  whitelist: true,            // strip unknown properties
+  whitelist: true, // strip unknown properties
   forbidNonWhitelisted: true, // reject them loudly
   transform: true,
-})
+});
 ```
 
 `whitelist` is what prevents mass assignment — a client adding `"role": "admin"` or
 `"amount": 1` to a payload has those fields stripped before they reach any logic.
 
-Boundary validation checks *shape*. Business rules — "this transaction can be paid" —
+Boundary validation checks _shape_. Business rules — "this transaction can be paid" —
 belong on the entity, not in a DTO decorator.
 
 ## Documentation

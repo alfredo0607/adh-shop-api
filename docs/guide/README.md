@@ -3,13 +3,13 @@
 Standards for building and maintaining this API. These are the rules the codebase is
 held to; the audits in `docs/audits/` measure the codebase against them.
 
-| Guide | Covers |
-| --- | --- |
+| Guide                                | Covers                                                                |
+| ------------------------------------ | --------------------------------------------------------------------- |
 | [architecture.md](./architecture.md) | Hexagonal layering, the dependency rule, Railway Oriented Programming |
-| [api-design.md](./api-design.md) | REST conventions, HTTP status codes, idempotency, pagination |
-| [security.md](./security.md) | Secrets, sensitive data, OWASP API Top 10, dependency hygiene |
-| [testing.md](./testing.md) | What to test, coverage policy, test doubles |
-| [git-workflow.md](./git-workflow.md) | Branching, commit format, pull requests, releases |
+| [api-design.md](./api-design.md)     | REST conventions, HTTP status codes, idempotency, pagination          |
+| [security.md](./security.md)         | Secrets, sensitive data, OWASP API Top 10, dependency hygiene         |
+| [testing.md](./testing.md)           | What to test, coverage policy, test doubles                           |
+| [git-workflow.md](./git-workflow.md) | Branching, commit format, pull requests, releases                     |
 
 ## How to use this
 

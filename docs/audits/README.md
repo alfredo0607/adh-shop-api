@@ -1,11 +1,11 @@
 # Audits
 
 Technical audits of this codebase, newest first. Each is a point-in-time diagnosis
-against the method in `docs/prompts/prompt_auditoría.md`.
+against the method in `docs/prompts/audit-prompt.md`.
 
-| Date | Audit | Scope | Critical | High | Medium | Low |
-| --- | --- | --- | ---: | ---: | ---: | ---: |
-| 2026-09-24 | [Backend audit](./2026-09-24-backend-audit.md) | `649447b` — shared kernel + configuration | 0 | 3 | 5 | 5 |
+| Date       | Audit                                          | Scope                                     | Critical | High | Medium | Low |
+| ---------- | ---------------------------------------------- | ----------------------------------------- | -------: | ---: | -----: | --: |
+| 2026-09-24 | [Backend audit](./2026-09-24-backend-audit.md) | `649447b` — shared kernel + configuration |        0 |    3 |      5 |   5 |
 
 ## Conventions
 

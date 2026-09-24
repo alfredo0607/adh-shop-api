@@ -1,12 +1,12 @@
 # Backend Technical Audit — 2026-09-24
 
-| Field | Value |
-| --- | --- |
-| Audited commit | `649447b` (`main`) |
-| Auditor role | Senior Backend Engineer / Tech Lead review |
-| Method | `docs/prompts/prompt_auditoría.md` |
-| Codebase size | 4 TypeScript files, 567 lines (232 production, 335 test) |
-| Code changed during audit | None. Diagnosis only, per method §42. |
+| Field                     | Value                                                    |
+| ------------------------- | -------------------------------------------------------- |
+| Audited commit            | `649447b` (`main`)                                       |
+| Auditor role              | Senior Backend Engineer / Tech Lead review               |
+| Method                    | `docs/prompts/audit-prompt.md`                           |
+| Codebase size             | 4 TypeScript files, 567 lines (232 production, 335 test) |
+| Code changed during audit | None. Diagnosis only, per method §42.                    |
 
 ---
 
@@ -24,22 +24,22 @@ Method rules §3 and §47.4 forbid inventing problems or functionality. The foll
 sections are therefore recorded as **not verifiable with the available code** rather
 than filled with speculation:
 
-| Method section | Status |
-| --- | --- |
-| §7 API design | Not verifiable — no endpoints exist |
-| §8 DTOs and validation | Not verifiable — no DTOs exist |
-| §9 Authentication | Not verifiable — not implemented |
-| §10 Authorization / IDOR / BOLA | Not verifiable — not implemented |
-| §12 Database / ORM | Not verifiable — no data access exists |
-| §13 Transactions and consistency | Not verifiable — no multi-resource writes exist |
-| §14 Concurrency and race conditions | Not verifiable — no shared mutable state exists |
-| §17 Cache | Not applicable — none exists, and none is currently justified |
-| §18 Queues and background jobs | Not applicable — none exist |
-| §19 External services | Not verifiable — payment gateway adapter not written |
-| §21 Logging | Not verifiable — no logger wired |
-| §22 Observability | Not verifiable — no health checks or tracing |
-| §29 E2E and API contracts | Not verifiable — no endpoints, no OpenAPI document |
-| §31 Graceful shutdown | Not verifiable — no bootstrap file |
+| Method section                      | Status                                                        |
+| ----------------------------------- | ------------------------------------------------------------- |
+| §7 API design                       | Not verifiable — no endpoints exist                           |
+| §8 DTOs and validation              | Not verifiable — no DTOs exist                                |
+| §9 Authentication                   | Not verifiable — not implemented                              |
+| §10 Authorization / IDOR / BOLA     | Not verifiable — not implemented                              |
+| §12 Database / ORM                  | Not verifiable — no data access exists                        |
+| §13 Transactions and consistency    | Not verifiable — no multi-resource writes exist               |
+| §14 Concurrency and race conditions | Not verifiable — no shared mutable state exists               |
+| §17 Cache                           | Not applicable — none exists, and none is currently justified |
+| §18 Queues and background jobs      | Not applicable — none exist                                   |
+| §19 External services               | Not verifiable — payment gateway adapter not written          |
+| §21 Logging                         | Not verifiable — no logger wired                              |
+| §22 Observability                   | Not verifiable — no health checks or tracing                  |
+| §29 E2E and API contracts           | Not verifiable — no endpoints, no OpenAPI document            |
+| §31 Graceful shutdown               | Not verifiable — no bootstrap file                            |
 
 Auditing the two units that **do** exist is the entire honest scope. A grade assigned
 to a module that has not been written would be meaningless.
@@ -74,10 +74,10 @@ bootstrap, no dependency injection graph, no HTTP surface.
 
 ## 2. Module inventory
 
-| # | Unit | Type | Files |
-| --- | --- | --- | --- |
-| 1 | Shared Kernel | Domain module | 4 |
-| 2 | Project Configuration & Build | Configuration (method §4, §23, §30) | 12 |
+| #   | Unit                          | Type                                | Files |
+| --- | ----------------------------- | ----------------------------------- | ----- |
+| 1   | Shared Kernel                 | Domain module                       | 4     |
+| 2   | Project Configuration & Build | Configuration (method §4, §23, §30) | 12    |
 
 Unit 2 is not a NestJS module. It is audited separately because method sections §4,
 §23 and §30 explicitly require reviewing global configuration, environment handling
@@ -100,20 +100,20 @@ signature as success, and the compiler forces both branches to be handled.
 
 ## Evaluation
 
-| Category | Grade |
-| --- | ---: |
-| NestJS architecture | N/A — framework-free by design |
-| Code quality | 9.0/10 |
-| TypeScript | 8.5/10 |
-| API design | N/A |
-| Security | N/A — no I/O, no untrusted input |
-| Authentication | N/A |
-| Database | N/A |
-| Performance | 9.0/10 |
-| Error handling | 7.0/10 |
-| Testing | 9.5/10 |
-| Maintainability | 9.0/10 |
-| Scalability | 8.5/10 |
+| Category            |                            Grade |
+| ------------------- | -------------------------------: |
+| NestJS architecture |   N/A — framework-free by design |
+| Code quality        |                           9.0/10 |
+| TypeScript          |                           8.5/10 |
+| API design          |                              N/A |
+| Security            | N/A — no I/O, no untrusted input |
+| Authentication      |                              N/A |
+| Database            |                              N/A |
+| Performance         |                           9.0/10 |
+| Error handling      |                           7.0/10 |
+| Testing             |                           9.5/10 |
+| Maintainability     |                           9.0/10 |
+| Scalability         |                           8.5/10 |
 
 Categories marked N/A are not scored rather than given an invented number. Averaging
 the eight applicable categories gives 8.4.
@@ -129,7 +129,7 @@ A-1 and A-2). A module is judged hardest on its own reason for existing.
   importing a library type into the core would undermine the boundary the whole
   architecture is built on. A correct and deliberate trade-off.
 - **100% coverage that is not coverage theatre.** 70/70 statements, 12/12 branches,
-  42/42 functions. More importantly the tests assert the *short-circuit property* —
+  42/42 functions. More importantly the tests assert the _short-circuit property_ —
   that steps following a failure never execute — using `jest.fn()` spies rather than
   only checking return values. A chain that kept charging a card after running out of
   stock would be a silent correctness bug, and these tests would catch it.
@@ -169,7 +169,7 @@ map<U>(fn: (value: T) => U): Result<U, E> {
 **Demonstrated.** Executed against the audited commit:
 
 ```typescript
-expect(() => ok<string, string>("{bad").map((raw) => JSON.parse(raw))).toThrow();
+expect(() => ok<string, string>('{bad').map((raw) => JSON.parse(raw))).toThrow();
 // passes — the exception escapes instead of becoming an Err
 ```
 
@@ -217,13 +217,13 @@ map<U>(fn: (value: T) => U | Promise<U>): ResultAsync<U, E> {
 
 ```typescript
 const chain = ResultAsync.ok<number, string>(1).map(async () => {
-  throw new Error("DynamoDB ProvisionedThroughputExceeded");
+  throw new Error('DynamoDB ProvisionedThroughputExceeded');
 });
-await expect(chain).rejects.toThrow("ProvisionedThroughputExceeded");
+await expect(chain).rejects.toThrow('ProvisionedThroughputExceeded');
 // passes — a rejection, not an Err
 ```
 
-**Impact.** This matters more than A-1 because asynchronous I/O *routinely* fails,
+**Impact.** This matters more than A-1 because asynchronous I/O _routinely_ fails,
 whereas pure mappers rarely throw. DynamoDB throttling, a gateway timeout and a network
 reset are expected operating conditions, not bugs. Any adapter author who writes
 `.map(async (t) => this.dynamo.put(t))` — the natural thing to write — silently opts
@@ -348,16 +348,16 @@ Method sections §4, §23, §24, §26, §30.
 
 ## Evaluation
 
-| Category | Grade |
-| --- | ---: |
-| Build configuration | 6.0/10 |
-| TypeScript strictness | 9.5/10 |
+| Category                           |  Grade |
+| ---------------------------------- | -----: |
+| Build configuration                | 6.0/10 |
+| TypeScript strictness              | 9.5/10 |
 | Linting / architecture enforcement | 9.5/10 |
-| Dependency hygiene | 5.0/10 |
-| Secret management | 8.0/10 |
-| Production readiness | 3.0/10 |
-| CI/CD | 2.0/10 |
-| Documentation | 4.0/10 |
+| Dependency hygiene                 | 5.0/10 |
+| Secret management                  | 8.0/10 |
+| Production readiness               | 3.0/10 |
+| CI/CD                              | 2.0/10 |
+| Documentation                      | 4.0/10 |
 
 The strong static-analysis setup is dragged down by dependency and production-readiness
 findings. Production readiness scores low because nothing exists yet — expected at this
@@ -524,11 +524,11 @@ was excluded. Keep the list minimal and be ready to justify it.
 
 Units are listed in repository order, not ranked.
 
-| Unit | Grade | Critical | High | Medium | Low |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Shared Kernel | 8.4/10 | 0 | 2 | 1 | 3 |
-| Project Configuration & Build | 6.5/10 | 0 | 1 | 4 | 2 |
-| **Total** | — | **0** | **3** | **5** | **5** |
+| Unit                          |  Grade | Critical |  High | Medium |   Low |
+| ----------------------------- | -----: | -------: | ----: | -----: | ----: |
+| Shared Kernel                 | 8.4/10 |        0 |     2 |      1 |     3 |
+| Project Configuration & Build | 6.5/10 |        0 |     1 |      4 |     2 |
+| **Total**                     |      — |    **0** | **3** |  **5** | **5** |
 
 **How solid is this backend?** The question cannot be answered yet, and saying otherwise
 would be dishonest: there is no backend, only its foundation. What can be judged is
@@ -571,24 +571,24 @@ delivered alongside this audit.
 ### Important debt — resolve before feature work continues
 
 **Undefined defect boundary** (A-1, A-2)
-*Origin:* combinators written without deciding the exception contract.
-*Impact:* the error model can be silently bypassed by ordinary-looking code.
-*Risk:* grows with every use case written against the current behaviour.
-*Cost now:* roughly half a day including tests. *Cost after ten use cases:* days, plus
+_Origin:_ combinators written without deciding the exception contract.
+_Impact:_ the error model can be silently bypassed by ordinary-looking code.
+_Risk:_ grows with every use case written against the current behaviour.
+_Cost now:_ roughly half a day including tests. _Cost after ten use cases:_ days, plus
 regression risk across every one of them.
-*Priority:* P1 — before the first adapter.
+_Priority:_ P1 — before the first adapter.
 
 ### Moderate debt — schedule it
 
 **Unused dependency surface** (B-2, B-1)
-*Origin:* installing the full anticipated stack in the scaffolding commit.
-*Impact:* supply-chain exposure and image size with no functional return.
-*Cost:* ~1 hour. *Priority:* P2.
+_Origin:_ installing the full anticipated stack in the scaffolding commit.
+_Impact:_ supply-chain exposure and image size with no functional return.
+_Cost:_ ~1 hour. _Priority:_ P2.
 
 **Unenforced quality gates** (B-5)
-*Origin:* CI deferred until after the application layer.
-*Impact:* nothing prevents a regression from reaching `main`.
-*Cost:* ~2 hours. *Priority:* P1 — it compounds with every subsequent merge.
+_Origin:_ CI deferred until after the application layer.
+_Impact:_ nothing prevents a regression from reaching `main`.
+_Cost:_ ~2 hours. _Priority:_ P1 — it compounds with every subsequent merge.
 
 ### Minor debt
 
