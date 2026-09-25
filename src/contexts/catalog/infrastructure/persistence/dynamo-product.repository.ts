@@ -13,6 +13,8 @@ import { ResultAsync, err, ok, type Result } from '../../../../shared/domain';
 import {
   CatalogUnavailable,
   InsufficientStock,
+  InvalidCursor,
+  InvalidStock,
   ProductNotFound,
   type InvalidProduct,
 } from '../../domain/catalog.errors';
@@ -72,7 +74,7 @@ export class DynamoProductRepository implements ProductRepository {
   findAll(query: {
     limit: number;
     cursor?: string | undefined;
-  }): ResultAsync<ProductPage, CatalogUnavailable> {
+  }): ResultAsync<ProductPage, InvalidCursor | CatalogUnavailable> {
     const startKey = this.decodeCursor(query.cursor);
 
     if (startKey.isErr()) {
@@ -91,7 +93,7 @@ export class DynamoProductRepository implements ProductRepository {
         }),
       ),
       (cause) => new CatalogUnavailable('Could not read the catalogue', cause),
-    ).andThen((response): Result<ProductPage, CatalogUnavailable> => {
+    ).andThen((response): Result<ProductPage, InvalidCursor | CatalogUnavailable> => {
       const items = (response.Items ?? []) as ProductItem[];
       const products: Product[] = [];
 
@@ -183,7 +185,7 @@ export class DynamoProductRepository implements ProductRepository {
   ): ResultAsync<Product, StockTransitionError> {
     if (!Number.isInteger(units) || units <= 0) {
       return ResultAsync.fromResult<Product, StockTransitionError>(
-        err(new InsufficientStock(units, 0)),
+        err(new InvalidStock('Unit count must be a positive integer', { units })),
       );
     }
 
@@ -287,19 +289,42 @@ export class DynamoProductRepository implements ProductRepository {
     return key === undefined ? null : Buffer.from(JSON.stringify(key)).toString('base64url');
   }
 
+  /**
+   * Accepts only what `encodeCursor` produces: an object holding exactly the
+   * four key attributes of a product in the listing index.
+   *
+   * Anything else is refused here rather than sent to DynamoDB. A foreign key
+   * would be rejected by the store anyway, but as an error indistinguishable
+   * from the store being down; and a key from another partition must never be
+   * used as a starting point at all.
+   */
   private decodeCursor(
     cursor: string | undefined,
-  ): Result<Record<string, unknown> | undefined, CatalogUnavailable> {
+  ): Result<Record<string, string> | undefined, InvalidCursor> {
     if (cursor === undefined) {
       return ok(undefined);
     }
 
+    let decoded: unknown;
     try {
-      return ok(
-        JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Record<string, unknown>,
-      );
-    } catch (cause) {
-      return err(new CatalogUnavailable('Malformed pagination cursor', cause));
+      decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    } catch {
+      return err(new InvalidCursor());
     }
+
+    if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      return err(new InvalidCursor());
+    }
+
+    const key = decoded as Record<string, unknown>;
+    const attributes = Object.keys(key).sort();
+    const isProductKey =
+      attributes.join(',') === 'GSI1PK,GSI1SK,PK,SK' &&
+      attributes.every((name) => typeof key[name] === 'string') &&
+      key['GSI1PK'] === PRODUCT_PARTITION &&
+      key['PK'] === `${PRODUCT_PARTITION}#${String(key['GSI1SK'])}` &&
+      key['SK'] === '#META';
+
+    return isProductKey ? ok(key as Record<string, string>) : err(new InvalidCursor());
   }
 }

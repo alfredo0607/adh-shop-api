@@ -45,10 +45,14 @@ export interface TransactionRepository {
     delivery: Delivery | undefined,
   ): ResultAsync<Transaction, SettlementConflict | CheckoutUnavailable>;
 
-  /** PENDING transactions whose reservation deadline has passed, oldest first. */
+  /**
+   * PENDING transactions whose reservation deadline has passed, oldest first.
+   * `after` continues from the last transaction of a previous page.
+   */
   findExpiredReservations(
     now: Date,
     limit: number,
+    after?: Transaction,
   ): ResultAsync<Transaction[], CheckoutUnavailable>;
 }
 

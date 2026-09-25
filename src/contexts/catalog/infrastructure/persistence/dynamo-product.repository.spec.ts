@@ -127,7 +127,43 @@ describe('DynamoProductRepository', () => {
         units,
       );
 
-      expect(result.isErr()).toBe(true);
+      // A malformed request, not a shortage: 422, never 409.
+      expect(result.isErr() && result.error.code).toBe('INVALID_STOCK');
+      expect(sent).toHaveLength(0);
+    });
+
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value)).toString('base64url');
+
+    it.each([
+      ['a JSON string', encode('x')],
+      ['an array', encode([1, 2])],
+      [
+        'a key with extra attributes',
+        encode({ PK: 'PRODUCT#p1', SK: '#META', GSI1PK: 'PRODUCT', GSI1SK: 'p1', x: 1 }),
+      ],
+      [
+        'a key from another partition',
+        encode({
+          PK: 'TRANSACTION#t1',
+          SK: '#META',
+          GSI1PK: 'PENDING_TRANSACTION',
+          GSI1SK: '2026',
+        }),
+      ],
+      [
+        'a key whose parts disagree',
+        encode({ PK: 'PRODUCT#p2', SK: '#META', GSI1PK: 'PRODUCT', GSI1SK: 'p1' }),
+      ],
+    ])('refuses %s as a cursor, as a client error, without querying', async (_case, cursor) => {
+      const { client, sent } = buildClient(() => ({ Items: [] }));
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').findAll({
+        limit: 20,
+        cursor,
+      });
+
+      expect(result.isErr() && result.error.kind).toBe('VALIDATION');
       expect(sent).toHaveLength(0);
     });
   });
@@ -303,7 +339,7 @@ describe('DynamoProductRepository', () => {
         cursor: 'not-base64-json',
       });
 
-      expect(result.isErr()).toBe(true);
+      expect(result.isErr() && result.error.code).toBe('INVALID_CURSOR');
       expect(sent).toHaveLength(0);
     });
 

@@ -41,6 +41,22 @@ export class InvalidProduct extends DomainError {
   readonly kind = 'VALIDATION' as const;
 }
 
+/**
+ * The pagination cursor was not one this service issued.
+ *
+ * A client mistake, so VALIDATION: reporting it as the catalogue being down
+ * would page whoever watches 5xx rates, and tell well-behaved clients to retry
+ * a request that can never succeed.
+ */
+export class InvalidCursor extends DomainError {
+  readonly code = 'INVALID_CURSOR';
+  readonly kind = 'VALIDATION' as const;
+
+  constructor() {
+    super('The pagination cursor is not valid; start again without one');
+  }
+}
+
 /** Raised by an adapter when the store itself fails, not the business rule. */
 export class CatalogUnavailable extends DomainError {
   readonly code = 'CATALOG_UNAVAILABLE';
@@ -62,4 +78,5 @@ export type CatalogError =
   | InvalidStock
   | InvalidMoney
   | InvalidProduct
+  | InvalidCursor
   | CatalogUnavailable;

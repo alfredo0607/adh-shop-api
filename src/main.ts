@@ -17,7 +17,7 @@ const bootstrap = async (): Promise<void> => {
   const environment = app.get<Environment>(ENVIRONMENT);
 
   // Security headers. `contentSecurityPolicy` is disabled because this process
-  // serves JSON only: the SPA is delivered by CloudFront, which applies its own
+  // serves JSON only: the SPA is delivered from its own origin, which applies its own
   // policy. A CSP on an API response protects nothing and misleads reviewers.
   app.use(
     helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } }),
@@ -28,20 +28,21 @@ const bootstrap = async (): Promise<void> => {
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
 
-  // Empty list means same-origin only, which is the deployed arrangement: one
-  // CloudFront distribution fronts both the SPA and this API, so the browser
-  // never issues a cross-origin request and CORS stops being a concern.
+  // The API has its own domain, so the storefront is always a different origin
+  // and every call it makes is cross-origin. Only the listed origins are
+  // answered; an empty list answers none, and a browser then refuses every call.
+  //
+  // No credentials: the API sets no cookies and reads no Authorization header
+  // from browsers, so allowing credentialed requests would only widen what a
+  // listed origin could do.
   app.enableCors({
     origin: allowedOrigins.length > 0 ? allowedOrigins : false,
-    credentials: true,
+    credentials: false,
     // Readable by the storefront: the new transaction's URL, and whether a
     // payment response is a replay of an earlier one.
     exposedHeaders: ['x-request-id', 'location', 'idempotent-replayed'],
   });
 
-  // Probes are excluded from the prefix and from versioning: load balancers and
-  // container orchestrators are configured with a fixed path, and they must not
-  // have to be reconfigured when the API is versioned.
   // Tells Express how many proxy hops to trust when deriving req.ip, which is
   // what the rate limiter counts by.
   //
@@ -53,12 +54,16 @@ const bootstrap = async (): Promise<void> => {
   // right of the header; everything to the left of that line is
   // attacker-controlled.
   //
-  // 0 for a direct connection. Behind CloudFront and nginx it is 2: CloudFront
-  // records the client address, nginx appends CloudFront's.
+  // 0 for a direct connection. Behind Cloudflare and nginx it is 2: Cloudflare
+  // records the client address, nginx appends Cloudflare's. The host accepts
+  // HTTPS only from Cloudflare's ranges, so nobody can skip the first hop.
   if (environment.TRUST_PROXY_HOPS > 0) {
     app.set('trust proxy', environment.TRUST_PROXY_HOPS);
   }
 
+  // Probes are excluded from the prefix and from versioning: load balancers and
+  // container orchestrators are configured with a fixed path, and they must not
+  // have to be reconfigured when the API is versioned.
   app.setGlobalPrefix('api', {
     exclude: [
       { path: 'health', method: RequestMethod.GET },
