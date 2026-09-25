@@ -34,7 +34,9 @@ const bootstrap = async (): Promise<void> => {
   app.enableCors({
     origin: allowedOrigins.length > 0 ? allowedOrigins : false,
     credentials: true,
-    exposedHeaders: ['x-request-id'],
+    // Readable by the storefront: the new transaction's URL, and whether a
+    // payment response is a replay of an earlier one.
+    exposedHeaders: ['x-request-id', 'location', 'idempotent-replayed'],
   });
 
   // Probes are excluded from the prefix and from versioning: load balancers and
