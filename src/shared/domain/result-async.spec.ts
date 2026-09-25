@@ -124,6 +124,34 @@ describe('ResultAsync', () => {
     });
   });
 
+  describe('orElse', () => {
+    it('leaves the happy path untouched and never runs the handler', async () => {
+      const handler = jest.fn();
+
+      const result = await ResultAsync.ok<number, string>(1).orElse(handler);
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(result).toEqual(ok(1));
+    });
+
+    it('can recover from a failure', async () => {
+      const result = await ResultAsync.err<string, number>('cache miss').orElse(() => ok(0));
+
+      expect(result).toEqual(ok(0));
+    });
+
+    it('can run an asynchronous compensation and still report the original failure', async () => {
+      const undo = jest.fn(() => ResultAsync.ok<void, string>(undefined));
+
+      const result = await ResultAsync.err<string, number>('write failed').orElse((error) =>
+        undo().andThen(() => err<string, number>(error)),
+      );
+
+      expect(undo).toHaveBeenCalledTimes(1);
+      expect(result).toEqual(err('write failed'));
+    });
+  });
+
   describe('tap', () => {
     it('runs the effect on the happy path without altering the value', async () => {
       const spy = jest.fn();

@@ -91,6 +91,21 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 
   /**
+   * Chains an operation on the failure track: recovery, or compensation.
+   *
+   * The mirror of `andThen`. A use case that has already reserved stock and
+   * then fails to record the order must hand the stock back before reporting
+   * the failure; this is where that undo runs, without leaving the railway.
+   */
+  orElse<F>(fn: (error: E) => Result<T, F> | ResultAsync<T, F>): ResultAsync<T, F> {
+    return new ResultAsync<T, F>(
+      this.inner.then(async (result) =>
+        result.isOk() ? ok<T, F>(result.value) : await fn(result.error),
+      ),
+    );
+  }
+
+  /**
    * Side effect on the happy path without altering the value in flight.
    *
    * Synchronous for the same reason as `map`. An asynchronous side effect is I/O
