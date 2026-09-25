@@ -1,5 +1,9 @@
 import { ResultAsync, err, ok } from '../../../../shared/domain';
-import { type CatalogUnavailable, ProductNotFound } from '../../domain/catalog.errors';
+import {
+  type CatalogUnavailable,
+  type InvalidCursor,
+  ProductNotFound,
+} from '../../domain/catalog.errors';
 import type { Product } from '../../domain/product';
 import type {
   ProductPage,
@@ -31,7 +35,7 @@ export class InMemoryProductRepository implements ProductRepository {
   findAll(query: {
     limit: number;
     cursor?: string | undefined;
-  }): ResultAsync<ProductPage, CatalogUnavailable> {
+  }): ResultAsync<ProductPage, InvalidCursor | CatalogUnavailable> {
     // Sorted by id so pagination is stable. Insertion order would make the same
     // cursor return different items after a write.
     const all = [...this.products.values()].sort((a, b) => a.id.localeCompare(b.id));
