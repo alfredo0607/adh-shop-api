@@ -3,9 +3,10 @@
 Technical audits of this codebase, newest first. Each is a point-in-time diagnosis
 against the method in `docs/prompts/audit-prompt.md`.
 
-| Date       | Audit                                          | Scope                                     | Critical | High | Medium | Low |
-| ---------- | ---------------------------------------------- | ----------------------------------------- | -------: | ---: | -----: | --: |
-| 2026-09-24 | [Backend audit](./2026-09-24-backend-audit.md) | `649447b` — shared kernel + configuration |        0 |    3 |      5 |   5 |
+| Date       | Audit                                                    | Scope                                             | Critical | High | Medium | Low |
+| ---------- | -------------------------------------------------------- | ------------------------------------------------- | -------: | ---: | -----: | --: |
+| 2026-09-24 | [Full backend audit](./2026-09-24-full-backend-audit.md) | `f1e895a` — every module, image and deployed edge |        0 |    2 |      5 |  13 |
+| 2026-09-24 | [Backend audit](./2026-09-24-backend-audit.md)           | `649447b` — shared kernel + configuration         |        0 |    3 |      5 |   5 |
 
 ## Conventions
 
@@ -26,6 +27,5 @@ editing them.
 
 ## Next audit
 
-Due once the first vertical slice exists (catalogue context with its HTTP and DynamoDB
-adapters). At that point the API design, security, concurrency and data-access sections
-become auditable for the first time.
+Due once the storefront is deployed against this API. The edge findings (P-1, S-1) and the
+readiness probe (S-2) should be re-verified from the storefront's origin at that point.
