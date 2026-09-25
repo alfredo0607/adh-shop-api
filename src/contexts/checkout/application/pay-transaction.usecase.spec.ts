@@ -126,6 +126,17 @@ describe('PayTransaction', () => {
     expect((await stored(transactions, command.transactionId)).paymentSubmitted).toBe(true);
   });
 
+  it('returns the stored transaction when its outcome was settled before the id was recorded', async () => {
+    const { useCase, transactions, command } = await setup();
+    jest
+      .spyOn(transactions, 'update')
+      .mockReturnValueOnce(ResultAsync.err(new CheckoutUnavailable('version changed')));
+
+    const result = await useCase.execute(command);
+
+    expect(result.isOk() && result.value.id).toBe(command.transactionId);
+  });
+
   it('answers not found for an unknown transaction', async () => {
     const { useCase, command } = await setup();
 

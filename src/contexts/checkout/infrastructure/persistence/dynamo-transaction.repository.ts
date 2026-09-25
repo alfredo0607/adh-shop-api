@@ -1,17 +1,24 @@
-import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import {
+  ConditionalCheckFailedException,
+  TransactionCanceledException,
+} from '@aws-sdk/client-dynamodb';
 import {
   GetCommand,
   PutCommand,
+  TransactWriteCommand,
   UpdateCommand,
   type DynamoDBDocumentClient,
 } from '@aws-sdk/lib-dynamodb';
 
 import { ResultAsync, err, type Result } from '../../../../shared/domain';
+import { productKey } from '../../../catalog/infrastructure/persistence/dynamo-product.repository';
 import {
   CheckoutUnavailable,
+  SettlementConflict,
   TransactionNotFound,
   TransactionNotPayable,
 } from '../../domain/checkout.errors';
+import type { Delivery } from '../../domain/delivery';
 import { Customer } from '../../domain/customer';
 import { DeliveryAddress } from '../../domain/delivery-address';
 import { Quote } from '../../domain/quote';
@@ -73,6 +80,17 @@ export interface TransactionItem {
 
 export const PENDING_PARTITION = 'PENDING_TRANSACTION';
 const key = (id: string): { PK: string; SK: string } => ({ PK: `TRANSACTION#${id}`, SK: '#META' });
+
+/**
+ * Stored under the transaction's partition, so a transaction and its delivery
+ * are one Query apart and never need a second index.
+ *
+ *   PK  TRANSACTION#<id>     SK  #DELIVERY
+ */
+export const deliveryKey = (transactionId: string): { PK: string; SK: string } => ({
+  PK: `TRANSACTION#${transactionId}`,
+  SK: '#DELIVERY',
+});
 
 export class DynamoTransactionRepository implements TransactionRepository {
   constructor(
@@ -171,7 +189,81 @@ export class DynamoTransactionRepository implements TransactionRepository {
         ),
     ).map(() => transaction);
   }
+  saveSettlement(
+    settled: Transaction,
+    delivery: Delivery | undefined,
+  ): ResultAsync<Transaction, SettlementConflict | CheckoutUnavailable> {
+    const units = settled.quote.units;
+
+    const stock =
+      settled.status === 'APPROVED'
+        ? // Sold: the units leave the product for good.
+          'SET #reserved = #reserved - :units, #version = #version + :one'
+        : // Not sold: the units go back on the shelf.
+          'SET #available = #available + :units, #reserved = #reserved - :units, #version = #version + :one';
+
+    return ResultAsync.fromPromise(
+      this.client.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: this.tableName,
+                Item: toItem(settled),
+                // Only from PENDING, and only if nothing else wrote since this
+                // copy was read. The event and the poll can race; one wins.
+                ConditionExpression: '#status = :pending AND #version = :previous',
+                ExpressionAttributeNames: { '#status': 'status', '#version': 'version' },
+                ExpressionAttributeValues: {
+                  ':pending': 'PENDING',
+                  ':previous': settled.version - 1,
+                },
+              },
+            },
+            {
+              Update: {
+                TableName: this.tableName,
+                Key: productKey(settled.product.id),
+                UpdateExpression: stock,
+                ConditionExpression: '#reserved >= :units',
+                ExpressionAttributeNames: {
+                  '#reserved': 'reserved',
+                  '#version': 'version',
+                  ...(settled.status === 'APPROVED' ? {} : { '#available': 'available' }),
+                },
+                ExpressionAttributeValues: { ':units': units, ':one': 1 },
+              },
+            },
+            ...(delivery === undefined
+              ? []
+              : [
+                  {
+                    Put: {
+                      TableName: this.tableName,
+                      Item: toDeliveryItem(delivery),
+                      ConditionExpression: 'attribute_not_exists(PK)',
+                    },
+                  },
+                ]),
+          ],
+        }),
+      ),
+      (cause): SettlementConflict | CheckoutUnavailable =>
+        isTransactionConflict(cause)
+          ? new SettlementConflict(settled.id, cause)
+          : new CheckoutUnavailable('Could not settle the transaction', cause),
+    ).map(() => settled);
+  }
 }
+
+/**
+ * Only a failed condition on the transaction row itself means someone else
+ * settled first. A failed condition on the stock row is a real inconsistency
+ * and must surface as a failure, not be mistaken for a harmless race.
+ */
+const isTransactionConflict = (cause: unknown): boolean =>
+  cause instanceof TransactionCanceledException &&
+  cause.CancellationReasons?.[0]?.Code === 'ConditionalCheckFailed';
 
 export const toItem = (transaction: Transaction): TransactionItem => {
   const { quote, customer, deliveryAddress: address } = transaction;
@@ -243,3 +335,46 @@ export const toDomain = (item: TransactionItem): Result<Transaction, CheckoutUna
         version: item.version,
       }),
     );
+
+export interface DeliveryItem {
+  PK: string;
+  SK: string;
+  transactionId: string;
+  status: string;
+  productId: string;
+  productName: string;
+  units: number;
+  recipientName: string;
+  recipientPhone: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  region: string;
+  postalCode?: string;
+  country: string;
+  createdAt: string;
+  estimatedDeliveryAt: string;
+}
+
+export const toDeliveryItem = (delivery: Delivery): DeliveryItem => {
+  const { address } = delivery;
+
+  return {
+    ...deliveryKey(delivery.transactionId),
+    transactionId: delivery.transactionId,
+    status: delivery.status,
+    productId: delivery.productId,
+    productName: delivery.productName,
+    units: delivery.units,
+    recipientName: delivery.recipientName,
+    recipientPhone: delivery.recipientPhone,
+    addressLine1: address.addressLine1,
+    ...(address.addressLine2 === undefined ? {} : { addressLine2: address.addressLine2 }),
+    city: address.city,
+    region: address.region,
+    ...(address.postalCode === undefined ? {} : { postalCode: address.postalCode }),
+    country: address.country,
+    createdAt: delivery.createdAt.toISOString(),
+    estimatedDeliveryAt: delivery.estimatedDeliveryAt.toISOString(),
+  };
+};

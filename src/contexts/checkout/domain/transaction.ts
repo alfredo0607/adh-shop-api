@@ -171,6 +171,32 @@ export class Transaction {
     return this.with({ paymentClaimedAt: undefined, updatedAt: now });
   }
 
+  /**
+   * Applies the outcome the gateway reported.
+   *
+   * Returns `undefined` when there is nothing to change: the outcome is still
+   * PENDING, or it was already applied. Gateways deliver events at least once,
+   * and the same outcome also arrives through polling, so a repeat is normal
+   * and must be harmless. A final status is never overwritten by another.
+   */
+  settle(
+    outcome: TransactionStatus,
+    now: Date,
+    gatewayTransactionId?: string,
+  ): Transaction | undefined {
+    if (outcome === 'PENDING' || this.isFinal) {
+      return undefined;
+    }
+
+    return this.with({
+      status: outcome,
+      updatedAt: now,
+      // Filled in when the charge call timed out before returning the id,
+      // and the outcome arrived by other means.
+      gatewayTransactionId: this.gatewayTransactionId ?? gatewayTransactionId,
+    });
+  }
+
   private with(changes: Partial<TransactionState>): Transaction {
     return new Transaction({ ...this.state, ...changes, version: this.state.version + 1 });
   }

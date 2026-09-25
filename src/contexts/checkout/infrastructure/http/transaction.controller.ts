@@ -23,9 +23,10 @@ import type { Response } from 'express';
 import { toHttpResponse } from '../../../../shared/infrastructure/http/domain-http.exception';
 // Value imports: see the note in the catalogue's controller.
 import { CreateTransaction } from '../../application/create-transaction.usecase';
-import { FindTransaction } from '../../application/find-transaction.usecase';
+import { FindDelivery, FindTransaction } from '../../application/find-transaction.usecase';
 import { QuoteCheckout } from '../../application/quote-checkout.usecase';
 import { CreateTransactionBody } from './create-transaction.body';
+import { DeliveryResponse } from './delivery.response';
 import { QuoteQuery } from './quote.query';
 import { QuoteResponse, TransactionResponse } from './transaction.response';
 
@@ -36,6 +37,7 @@ export class TransactionController {
     private readonly quoteCheckout: QuoteCheckout,
     private readonly createTransaction: CreateTransaction,
     private readonly findTransaction: FindTransaction,
+    private readonly findDelivery: FindDelivery,
   ) {}
 
   @Get('quotes')
@@ -86,6 +88,9 @@ export class TransactionController {
   @Get('transactions/:id')
   @ApiOperation({
     summary: 'Read a transaction, which is how the storefront resumes after a refresh',
+    description:
+      'While a submitted payment is PENDING, the gateway is asked for its outcome before ' +
+      'answering, so polling this endpoint is enough to see the payment settle.',
   })
   @ApiOkResponse({ type: TransactionResponse })
   @ApiResponse({ status: 400, description: 'The id is not a UUID' })
@@ -98,5 +103,19 @@ export class TransactionController {
     const transaction = await this.findTransaction.execute(id);
 
     return TransactionResponse.from(toHttpResponse(transaction));
+  }
+
+  @Get('transactions/:id/delivery')
+  @ApiOperation({ summary: 'The delivery assigned to an approved transaction' })
+  @ApiOkResponse({ type: DeliveryResponse })
+  @ApiResponse({ status: 400, description: 'The id is not a UUID' })
+  @ApiResponse({ status: 404, description: 'DELIVERY_NOT_FOUND — not approved, or unknown' })
+  @Header('Cache-Control', 'no-store')
+  async delivery(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<DeliveryResponse> {
+    const delivery = await this.findDelivery.execute(id);
+
+    return DeliveryResponse.from(toHttpResponse(delivery));
   }
 }

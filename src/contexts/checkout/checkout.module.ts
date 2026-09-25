@@ -8,22 +8,31 @@ import { DYNAMODB_CLIENT } from '../../shared/infrastructure/persistence/dynamod
 import { CatalogModule } from '../catalog/catalog.module';
 import { PRODUCT_REPOSITORY, type ProductRepository } from '../catalog/domain/product.repository';
 import { type CheckoutPolicy, CreateTransaction } from './application/create-transaction.usecase';
-import { FindTransaction } from './application/find-transaction.usecase';
+import { FindDelivery, FindTransaction } from './application/find-transaction.usecase';
 import { GetPaymentTerms } from './application/get-payment-terms.usecase';
 import { PayTransaction } from './application/pay-transaction.usecase';
 import { QuoteCheckout } from './application/quote-checkout.usecase';
+import { SettleTransaction } from './application/settle-transaction.usecase';
 import { CUSTOMER_REPOSITORY, type CustomerRepository } from './domain/customer.repository';
 import { INVENTORY_PORT, type InventoryPort } from './domain/inventory.port';
 import { PAYMENT_GATEWAY_PORT, type PaymentGatewayPort } from './domain/payment-gateway.port';
 import {
+  DELIVERY_REPOSITORY,
+  type DeliveryRepository,
   TRANSACTION_REPOSITORY,
   type TransactionRepository,
 } from './domain/transaction.repository';
 import { PaymentController } from './infrastructure/http/payment.controller';
+import {
+  PAYMENT_EVENT_VERIFIER,
+  PaymentEventsController,
+} from './infrastructure/http/payment-events.controller';
 import { TransactionController } from './infrastructure/http/transaction.controller';
 import { CatalogInventoryAdapter } from './infrastructure/inventory/catalog-inventory.adapter';
 import { HttpPaymentGateway } from './infrastructure/payment/http-payment.gateway';
+import { PaymentEventVerifier } from './infrastructure/payment/payment-event.verifier';
 import { DynamoCustomerRepository } from './infrastructure/persistence/dynamo-customer.repository';
+import { DynamoDeliveryRepository } from './infrastructure/persistence/dynamo-delivery.repository';
 import { DynamoTransactionRepository } from './infrastructure/persistence/dynamo-transaction.repository';
 
 const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
@@ -34,7 +43,7 @@ const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
  */
 @Module({
   imports: [CatalogModule],
-  controllers: [TransactionController, PaymentController],
+  controllers: [TransactionController, PaymentController, PaymentEventsController],
   providers: [
     {
       provide: CHECKOUT_POLICY,
@@ -125,10 +134,36 @@ const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
         new CreateTransaction(inventory, customers, transactions, ids, clock, policy),
     },
     {
+      provide: DELIVERY_REPOSITORY,
+      inject: [DYNAMODB_CLIENT, ENVIRONMENT],
+      useFactory: (client: DynamoDBDocumentClient, environment: Environment): DeliveryRepository =>
+        new DynamoDeliveryRepository(client, environment.DYNAMODB_TABLE_NAME),
+    },
+    {
+      provide: SettleTransaction,
+      inject: [TRANSACTION_REPOSITORY, CLOCK_PORT],
+      useFactory: (transactions: TransactionRepository, clock: ClockPort): SettleTransaction =>
+        new SettleTransaction(transactions, clock),
+    },
+    {
       provide: FindTransaction,
-      inject: [TRANSACTION_REPOSITORY],
-      useFactory: (transactions: TransactionRepository): FindTransaction =>
-        new FindTransaction(transactions),
+      inject: [TRANSACTION_REPOSITORY, PAYMENT_GATEWAY_PORT, SettleTransaction],
+      useFactory: (
+        transactions: TransactionRepository,
+        gateway: PaymentGatewayPort,
+        settle: SettleTransaction,
+      ): FindTransaction => new FindTransaction(transactions, gateway, settle),
+    },
+    {
+      provide: FindDelivery,
+      inject: [DELIVERY_REPOSITORY],
+      useFactory: (deliveries: DeliveryRepository): FindDelivery => new FindDelivery(deliveries),
+    },
+    {
+      provide: PAYMENT_EVENT_VERIFIER,
+      inject: [ENVIRONMENT, CLOCK_PORT],
+      useFactory: (environment: Environment, clock: ClockPort): PaymentEventVerifier =>
+        new PaymentEventVerifier(environment.PAYMENT_EVENTS_SECRET, () => clock.now()),
     },
   ],
   exports: [TRANSACTION_REPOSITORY, INVENTORY_PORT, PAYMENT_GATEWAY_PORT],

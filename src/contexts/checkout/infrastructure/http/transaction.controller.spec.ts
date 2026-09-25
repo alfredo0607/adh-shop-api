@@ -9,7 +9,9 @@ import { aProduct } from '../../../catalog/__fixtures__/product.fixture';
 import { InMemoryProductRepository } from '../../../catalog/infrastructure/persistence/in-memory-product.repository';
 import { FEES, NOW, TOTAL_FOR_ONE, TTL_MS, aCommand } from '../../__fixtures__/checkout.fixture';
 import { CreateTransaction } from '../../application/create-transaction.usecase';
-import { FindTransaction } from '../../application/find-transaction.usecase';
+import { FindDelivery, FindTransaction } from '../../application/find-transaction.usecase';
+import { SettleTransaction } from '../../application/settle-transaction.usecase';
+import { FakePaymentGateway } from '../payment/fake-payment.gateway';
 import { QuoteCheckout } from '../../application/quote-checkout.usecase';
 import { CatalogInventoryAdapter } from '../inventory/catalog-inventory.adapter';
 import {
@@ -47,7 +49,15 @@ describe('TransactionController', () => {
             { fees: FEES, reservationTtlMs: TTL_MS },
           ),
         },
-        { provide: FindTransaction, useValue: new FindTransaction(transactions) },
+        {
+          provide: FindTransaction,
+          useValue: new FindTransaction(
+            transactions,
+            new FakePaymentGateway(),
+            new SettleTransaction(transactions, { now: (): Date => NOW }),
+          ),
+        },
+        { provide: FindDelivery, useValue: new FindDelivery(transactions) },
       ],
     }).compile();
 

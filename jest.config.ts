@@ -4,6 +4,9 @@ const config: Config = {
   rootDir: '.',
   roots: ['<rootDir>/src'],
   testEnvironment: 'node',
+  // The HTTP suites boot a Nest application; under coverage on a loaded CI
+  // runner that alone can pass the 5 s default and fail a correct test.
+  testTimeout: 20_000,
   testRegex: '.*\.spec\.ts$',
   transform: {
     '^.+\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.json' }],

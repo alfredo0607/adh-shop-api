@@ -35,6 +35,7 @@ const paymentSchema = z.object({
   data: z.object({
     id: z.string(),
     status: z.enum(['PENDING', 'APPROVED', 'DECLINED', 'VOIDED', 'ERROR']),
+    amount_in_cents: z.number().int(),
   }),
 });
 
@@ -180,7 +181,11 @@ const toPayment = (response: RawResponse): Result<GatewayPayment, PaymentGateway
     return err(unexpected('payment', response));
   }
 
-  return ok({ gatewayTransactionId: parsed.data.data.id, status: parsed.data.data.status });
+  return ok({
+    gatewayTransactionId: parsed.data.data.id,
+    status: parsed.data.data.status,
+    amountInCents: parsed.data.data.amount_in_cents,
+  });
 };
 
 /**

@@ -120,6 +120,52 @@ export class PaymentGatewayUnavailable extends DomainError {
   }
 }
 
+/**
+ * Another writer settled or changed the transaction first. Not a failure of
+ * the outcome: the caller re-reads, and finds it already applied.
+ */
+export class SettlementConflict extends DomainError {
+  readonly code = 'SETTLEMENT_CONFLICT';
+  readonly kind = 'CONFLICT' as const;
+
+  constructor(transactionId: string, cause?: unknown) {
+    super('The transaction was settled concurrently', { transactionId }, cause);
+  }
+}
+
+/**
+ * The gateway reported an amount other than the one this transaction charged.
+ * The integrity signature makes this impossible in normal operation, so it is
+ * never applied automatically: it is left for a person to look at.
+ */
+export class SettlementAmountMismatch extends DomainError {
+  readonly code = 'SETTLEMENT_AMOUNT_MISMATCH';
+  readonly kind = 'CONFLICT' as const;
+
+  constructor(transactionId: string, expectedInCents: number, reportedInCents: number) {
+    super('The reported amount does not match the transaction', {
+      transactionId,
+      expectedInCents,
+      reportedInCents,
+    });
+  }
+}
+
+export class DeliveryNotFound extends DomainError {
+  readonly code = 'DELIVERY_NOT_FOUND';
+  readonly kind = 'NOT_FOUND' as const;
+
+  constructor(transactionId: string) {
+    super('No delivery exists for this transaction', { transactionId });
+  }
+}
+
+/** A payment event whose signature does not verify. It did not come from the gateway. */
+export class InvalidPaymentEvent extends DomainError {
+  readonly code = 'INVALID_PAYMENT_EVENT';
+  readonly kind = 'UNAUTHORIZED' as const;
+}
+
 /** Raised by an adapter when a store fails, not a business rule. */
 export class CheckoutUnavailable extends DomainError {
   readonly code = 'CHECKOUT_UNAVAILABLE';

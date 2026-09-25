@@ -1,12 +1,18 @@
-import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import {
+  ConditionalCheckFailedException,
+  TransactionCanceledException,
+} from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
 import { NOW, aTransaction } from '../../__fixtures__/checkout.fixture';
+import { Delivery } from '../../domain/delivery';
 import { DynamoCustomerRepository, customerKey } from './dynamo-customer.repository';
+import { DynamoDeliveryRepository } from './dynamo-delivery.repository';
 import {
   DynamoTransactionRepository,
   PENDING_PARTITION,
   type TransactionItem,
+  toDeliveryItem,
   toItem,
 } from './dynamo-transaction.repository';
 
@@ -164,6 +170,127 @@ describe('DynamoTransactionRepository payment writes', () => {
 
     expect(result.isOk() && result.value.gatewayTransactionId).toBe('gw-1');
     expect(result.isOk() && result.value.paymentClaimedAt).toEqual(recorded.paymentClaimedAt);
+  });
+});
+
+describe('DynamoTransactionRepository settlement', () => {
+  interface TransactItem {
+    Put?: { Item: Record<string, unknown>; ConditionExpression: string };
+    Update?: {
+      Key: Record<string, unknown>;
+      UpdateExpression: string;
+      ConditionExpression: string;
+    };
+  }
+
+  const settled = (status: 'APPROVED' | 'DECLINED'): ReturnType<typeof aTransaction> => {
+    const result = aTransaction().settle(status, NOW);
+    if (result === undefined) throw new Error('fixture should settle');
+    return result;
+  };
+
+  const itemsOf = (sent: { input: Record<string, unknown> }[]): TransactItem[] =>
+    sent[0]?.input['TransactItems'] as TransactItem[];
+
+  it('approves, sells the units and creates the delivery in one transaction', async () => {
+    const { client, sent } = buildClient(() => ({}));
+    const approved = settled('APPROVED');
+
+    const result = await new DynamoTransactionRepository(client, 'table').saveSettlement(
+      approved,
+      Delivery.forApproved(approved, NOW),
+    );
+
+    const [transaction, stock, delivery] = itemsOf(sent);
+    expect(result.isOk()).toBe(true);
+    expect(transaction?.Put?.ConditionExpression).toBe(
+      '#status = :pending AND #version = :previous',
+    );
+    // Settled: it leaves the index of open reservations.
+    expect(transaction?.Put?.Item).not.toHaveProperty('GSI1PK');
+    expect(stock?.Update?.Key).toEqual({ PK: 'PRODUCT#prod-01', SK: '#META' });
+    expect(stock?.Update?.UpdateExpression).not.toContain('#available');
+    expect(stock?.Update?.ConditionExpression).toBe('#reserved >= :units');
+    expect(delivery?.Put?.Item['SK']).toBe('#DELIVERY');
+  });
+
+  it('returns the units to the shelf when the payment did not go through', async () => {
+    const { client, sent } = buildClient(() => ({}));
+
+    await new DynamoTransactionRepository(client, 'table').saveSettlement(
+      settled('DECLINED'),
+      undefined,
+    );
+
+    const items = itemsOf(sent);
+    expect(items).toHaveLength(2);
+    expect(items[1]?.Update?.UpdateExpression).toContain('#available = #available + :units');
+  });
+
+  const cancelled = (codes: string[]): TransactionCanceledException =>
+    new TransactionCanceledException({
+      message: 'cancelled',
+      $metadata: {},
+      CancellationReasons: codes.map((Code) => ({ Code })),
+    });
+
+  it('recognises that another writer settled first', async () => {
+    const { client } = buildClient(() => cancelled(['ConditionalCheckFailed', 'None']));
+
+    const result = await new DynamoTransactionRepository(client, 'table').saveSettlement(
+      settled('DECLINED'),
+      undefined,
+    );
+
+    expect(result.isErr() && result.error.code).toBe('SETTLEMENT_CONFLICT');
+  });
+
+  it('does not mistake a stock inconsistency for a harmless race', async () => {
+    const { client } = buildClient(() => cancelled(['None', 'ConditionalCheckFailed']));
+
+    const result = await new DynamoTransactionRepository(client, 'table').saveSettlement(
+      settled('DECLINED'),
+      undefined,
+    );
+
+    expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
+  });
+});
+
+describe('DynamoDeliveryRepository', () => {
+  const approved = aTransaction().settle('APPROVED', NOW);
+  if (approved === undefined) throw new Error('fixture should settle');
+  const delivery = Delivery.forApproved(approved, NOW);
+
+  it('reads the delivery stored under its transaction', async () => {
+    const { client, sent } = buildClient(() => ({ Item: toDeliveryItem(delivery) }));
+
+    const result = await new DynamoDeliveryRepository(client, 'table').findByTransactionId(
+      approved.id,
+    );
+
+    expect(sent[0]?.input['Key']).toEqual({ PK: `TRANSACTION#${approved.id}`, SK: '#DELIVERY' });
+    expect(result.isOk() && result.value.estimatedDeliveryAt).toEqual(delivery.estimatedDeliveryAt);
+    expect(result.isOk() && result.value.recipientPhone).toBe(delivery.recipientPhone);
+  });
+
+  it('answers not found when the transaction has no delivery', async () => {
+    const { client } = buildClient(() => ({}));
+
+    const result = await new DynamoDeliveryRepository(client, 'table').findByTransactionId('x');
+
+    expect(result.isErr() && result.error.code).toBe('DELIVERY_NOT_FOUND');
+  });
+
+  it.each([
+    ['a malformed row', { Item: { ...toDeliveryItem(delivery), country: 'XX' } }],
+    ['a store failure', new Error('throttled')],
+  ])('reports %s as unavailable', async (_case, response) => {
+    const { client } = buildClient(() => response);
+
+    const result = await new DynamoDeliveryRepository(client, 'table').findByTransactionId('x');
+
+    expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
   });
 });
 

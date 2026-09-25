@@ -54,6 +54,15 @@ interface ProductItem {
 
 const PRODUCT_PARTITION = 'PRODUCT';
 
+/**
+ * Exported because the checkout settles a payment and moves this product's
+ * stock in one DynamoDB transaction, which has to name the item by its key.
+ */
+export const productKey = (id: string): { PK: string; SK: string } => ({
+  PK: `${PRODUCT_PARTITION}#${id}`,
+  SK: '#META',
+});
+
 export class DynamoProductRepository implements ProductRepository {
   constructor(
     private readonly client: DynamoDBDocumentClient,
@@ -108,7 +117,7 @@ export class DynamoProductRepository implements ProductRepository {
       this.client.send(
         new GetCommand({
           TableName: this.tableName,
-          Key: { PK: `${PRODUCT_PARTITION}#${id}`, SK: '#META' },
+          Key: productKey(id),
           // The catalogue must not serve a price that a concurrent write has
           // already changed.
           ConsistentRead: true,
@@ -182,7 +191,7 @@ export class DynamoProductRepository implements ProductRepository {
       this.client.send(
         new UpdateCommand({
           TableName: this.tableName,
-          Key: { PK: `${PRODUCT_PARTITION}#${productId}`, SK: '#META' },
+          Key: productKey(productId),
           UpdateExpression: expression.update,
           ConditionExpression: expression.condition,
           // `available`, `reserved`, `name` and `version` are all reserved

@@ -38,7 +38,11 @@ describe('PaymentController', () => {
     transactions.byId.clear();
     idempotency.entries.clear();
     gateway.charges.length = 0;
-    gateway.nextCharge = ResultAsync.ok({ gatewayTransactionId: 'gw-1', status: 'PENDING' });
+    gateway.nextCharge = ResultAsync.ok({
+      gatewayTransactionId: 'gw-1',
+      status: 'PENDING',
+      amountInCents: 0,
+    });
     await transactions.create(aTransaction({ id: ID }));
   });
 
