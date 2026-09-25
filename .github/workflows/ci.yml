@@ -151,6 +151,8 @@ jobs:
             if curl -fsS http://127.0.0.1:3000/health > /dev/null; then
               echo "Container answered /health after ${attempt} attempt(s)"
               curl -fsS http://127.0.0.1:3000/ready
+              # The README links the live API docs; losing them breaks a deliverable.
+              curl -fsS http://127.0.0.1:3000/api/docs-json > /dev/null
               exit 0
             fi
             sleep 2
