@@ -278,6 +278,20 @@ describe('DynamoTransactionRepository expired reservations', () => {
     expect(result.isOk() && result.value.map((t) => t.id)).toEqual([overdue.id]);
   });
 
+  it('continues from the index key of the last row of the previous page', async () => {
+    const last = aTransaction();
+    const { client, sent } = buildClient(() => ({ Items: [] }));
+
+    await new DynamoTransactionRepository(client, 'table').findExpiredReservations(NOW, 25, last);
+
+    expect(sent[0]?.input['ExclusiveStartKey']).toEqual({
+      PK: `TRANSACTION#${last.id}`,
+      SK: '#META',
+      GSI1PK: 'PENDING_TRANSACTION',
+      GSI1SK: last.reservationExpiresAt.toISOString(),
+    });
+  });
+
   it('translates a store failure', async () => {
     const { client } = buildClient(() => new Error('throttled'));
 

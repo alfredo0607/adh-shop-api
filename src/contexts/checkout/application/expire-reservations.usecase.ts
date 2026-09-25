@@ -12,9 +12,16 @@ export interface ExpirySummary {
   readonly settled: number;
   /** Left for the next run: payment still in flight, or a transient failure. */
   readonly deferred: number;
+  /**
+   * Of the deferred, payments the gateway has kept PENDING for longer than
+   * STALE_PAYMENT_MS past their deadline. Their units stay reserved on purpose
+   * — the gateway could still approve them — so they need a person, and the
+   * sweeper reports them at error level.
+   */
+  readonly stale: number;
 }
 
-type Outcome = keyof ExpirySummary;
+type Outcome = 'expired' | 'settled' | 'deferred' | 'stale';
 
 /**
  * Returns the units of abandoned checkouts to the shelf.
@@ -24,8 +31,19 @@ type Outcome = keyof ExpirySummary;
  * is simply retried on the next run instead of blocking the rest.
  */
 export class ExpireReservations {
-  /** How many overdue reservations one run handles. The next run takes the rest. */
+  /** Overdue reservations read per page. */
   static readonly BATCH_SIZE = 25;
+
+  /**
+   * Pages per run. Paging past the rows a run defers is what keeps a pile of
+   * payments stuck at the gateway — always the oldest, so always first — from
+   * hiding every newer abandoned checkout behind them. Bounded so one run
+   * cannot grow without limit; the next run starts from the top again.
+   */
+  static readonly MAX_PAGES = 4;
+
+  /** Past this, a payment the gateway still calls PENDING is reported as stale. */
+  static readonly STALE_PAYMENT_MS = 24 * 60 * 60_000;
 
   /**
    * How long a claimed payment with no trace at the gateway is given before it
@@ -41,22 +59,48 @@ export class ExpireReservations {
     private readonly clock: ClockPort,
   ) {}
 
+  /**
+   * Fails only if the first page cannot be read. A later page failing ends the
+   * run early with what it already did; the next run picks up the rest.
+   */
   execute(): ResultAsync<ExpirySummary, CheckoutUnavailable> {
+    const now = this.clock.now();
+
     return this.transactions
-      .findExpiredReservations(this.clock.now(), ExpireReservations.BATCH_SIZE)
-      .andThen((overdue) => ResultAsync.fromSafePromise(this.resolveAll(overdue)));
+      .findExpiredReservations(now, ExpireReservations.BATCH_SIZE)
+      .andThen((firstPage) => ResultAsync.fromSafePromise(this.resolveFrom(firstPage, now)));
   }
 
-  private async resolveAll(overdue: Transaction[]): Promise<ExpirySummary> {
-    const summary: Record<Outcome, number> = { expired: 0, settled: 0, deferred: 0 };
+  private async resolveFrom(firstPage: Transaction[], now: Date): Promise<ExpirySummary> {
+    const counts: Record<Outcome, number> = { expired: 0, settled: 0, deferred: 0, stale: 0 };
+    let page = firstPage;
 
-    // One at a time: a batch is small, and parallel writes against the same
-    // product row would only contend with each other.
-    for (const transaction of overdue) {
-      summary[await this.resolve(transaction)] += 1;
+    for (let pages = 1; ; pages += 1) {
+      // One at a time: a page is small, and parallel writes against the same
+      // product row would only contend with each other.
+      for (const transaction of page) {
+        counts[await this.resolve(transaction)] += 1;
+      }
+
+      const last = page[page.length - 1];
+      if (last === undefined || page.length < ExpireReservations.BATCH_SIZE) break;
+      if (pages >= ExpireReservations.MAX_PAGES) break;
+
+      const next = await this.transactions.findExpiredReservations(
+        now,
+        ExpireReservations.BATCH_SIZE,
+        last,
+      );
+      if (next.isErr()) break;
+      page = next.value;
     }
 
-    return summary;
+    return {
+      expired: counts.expired,
+      settled: counts.settled,
+      deferred: counts.deferred + counts.stale,
+      stale: counts.stale,
+    };
   }
 
   private async resolve(transaction: Transaction): Promise<Outcome> {
@@ -78,7 +122,7 @@ export class ExpireReservations {
         }
 
         if (payment.status === 'PENDING') {
-          return Promise.resolve<Outcome>('deferred');
+          return Promise.resolve<Outcome>(this.isStale(transaction) ? 'stale' : 'deferred');
         }
 
         return this.settle
@@ -105,6 +149,11 @@ export class ExpireReservations {
       // run's to close.
       err: (): Outcome => 'deferred',
     });
+  }
+
+  private isStale(transaction: Transaction): boolean {
+    const overdueMs = this.clock.now().getTime() - transaction.reservationExpiresAt.getTime();
+    return overdueMs >= ExpireReservations.STALE_PAYMENT_MS;
   }
 
   private claimAbandoned(transaction: Transaction): boolean {

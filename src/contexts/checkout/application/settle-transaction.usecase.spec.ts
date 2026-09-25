@@ -187,6 +187,28 @@ describe('FindTransaction, while a payment is in flight', () => {
     expect(result.isOk() && result.value.status).toBe('PENDING');
   });
 
+  it('finds the payment by reference when its gateway id was never recorded', async () => {
+    const transactions = new InMemoryTransactionRepository();
+    const claimed = aTransaction({ id: ID }).claimPayment(clock.now());
+    if (claimed.isErr()) throw new Error('fixture claim failed');
+    await transactions.create(claimed.value);
+    const gateway = new FakePaymentGateway();
+    gateway.nextFindByReference = ResultAsync.ok({
+      gatewayTransactionId: 'gw-7',
+      status: 'APPROVED',
+      amountInCents: TOTAL_FOR_ONE,
+    });
+
+    const result = await new FindTransaction(
+      transactions,
+      gateway,
+      new SettleTransaction(transactions, clock),
+    ).execute(ID);
+
+    expect(result.isOk() && result.value.status).toBe('APPROVED');
+    expect(result.isOk() && result.value.gatewayTransactionId).toBe('gw-7');
+  });
+
   it('does not bother the gateway before a payment was sent', async () => {
     const { useCase, gateway } = await setup(false);
     const find = jest.spyOn(gateway, 'find');
