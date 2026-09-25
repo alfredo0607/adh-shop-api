@@ -268,6 +268,7 @@ export class DynamoTransactionRepository implements TransactionRepository {
   findExpiredReservations(
     now: Date,
     limit: number,
+    after?: Transaction,
   ): ResultAsync<Transaction[], CheckoutUnavailable> {
     return ResultAsync.fromPromise(
       this.client.send(
@@ -280,6 +281,17 @@ export class DynamoTransactionRepository implements TransactionRepository {
             ':now': now.toISOString(),
           },
           Limit: limit,
+          // The index key of the last row already read, rebuilt from the row
+          // itself: the same four attributes DynamoDB would hand back.
+          ...(after === undefined
+            ? {}
+            : {
+                ExclusiveStartKey: {
+                  ...key(after.id),
+                  GSI1PK: PENDING_PARTITION,
+                  GSI1SK: after.reservationExpiresAt.toISOString(),
+                },
+              }),
         }),
       ),
       (cause) => new CheckoutUnavailable('Could not read expired reservations', cause),

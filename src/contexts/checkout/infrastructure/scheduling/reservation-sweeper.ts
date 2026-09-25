@@ -55,6 +55,13 @@ export class ReservationSweeper implements OnApplicationBootstrap, OnApplication
     try {
       await this.expireReservations.execute().match({
         ok: (summary) => {
+          if (summary.stale > 0) {
+            this.logger.error(
+              `${summary.stale} payment(s) still PENDING at the gateway a day past their ` +
+                'reservation deadline. Their units stay reserved; review them by hand.',
+            );
+          }
+
           if (summary.expired + summary.settled + summary.deferred > 0) {
             this.logger.log(
               `Reservations: ${summary.expired} expired, ${summary.settled} settled, ` +

@@ -3,7 +3,7 @@ import { aProduct } from '../../catalog/__fixtures__/product.fixture';
 import { InMemoryProductRepository } from '../../catalog/infrastructure/persistence/in-memory-product.repository';
 import { NOW, TOTAL_FOR_ONE, TTL_MS, aTransaction } from '../__fixtures__/checkout.fixture';
 import { CheckoutUnavailable, PaymentGatewayUnavailable } from '../domain/checkout.errors';
-import type { Transaction } from '../domain/transaction';
+import { Transaction } from '../domain/transaction';
 import { FakePaymentGateway } from '../infrastructure/payment/fake-payment.gateway';
 import { InMemoryTransactionRepository } from '../infrastructure/persistence/in-memory-checkout.repositories';
 import { ExpireReservations } from './expire-reservations.usecase';
@@ -71,7 +71,12 @@ describe('ExpireReservations', () => {
 
     const summary = await useCase.execute();
 
-    expect(summary.isOk() && summary.value).toEqual({ expired: 1, settled: 0, deferred: 0 });
+    expect(summary.isOk() && summary.value).toEqual({
+      expired: 1,
+      settled: 0,
+      deferred: 0,
+      stale: 0,
+    });
     expect(await statusOf()).toBe('EXPIRED');
     expect(await stock()).toEqual({ available: 5, reserved: 0 });
   });
@@ -81,7 +86,12 @@ describe('ExpireReservations', () => {
 
     const summary = await useCase.execute();
 
-    expect(summary.isOk() && summary.value).toEqual({ expired: 0, settled: 0, deferred: 0 });
+    expect(summary.isOk() && summary.value).toEqual({
+      expired: 0,
+      settled: 0,
+      deferred: 0,
+      stale: 0,
+    });
     expect(await statusOf()).toBe('PENDING');
   });
 
@@ -148,6 +158,24 @@ describe('ExpireReservations', () => {
     expect(await statusOf()).toBe('PENDING');
   });
 
+  it('reports a payment the gateway has kept PENDING for a day as stale, and keeps its units', async () => {
+    const aDayLate = new Date(NOW.getTime() + TTL_MS + ExpireReservations.STALE_PAYMENT_MS);
+    const { useCase, stock } = await setup(
+      claimedAt(new Date(NOW.getTime() + 60_000), 'gw-1'),
+      aDayLate,
+    );
+
+    const summary = await useCase.execute();
+
+    expect(summary.isOk() && summary.value).toEqual({
+      expired: 0,
+      settled: 0,
+      deferred: 1,
+      stale: 1,
+    });
+    expect(await stock()).toEqual({ available: 4, reserved: 1 });
+  });
+
   it('defers when the gateway cannot be asked', async () => {
     const { useCase, gateway, statusOf } = await setup(
       claimedAt(new Date(NOW.getTime() + 60_000), 'gw-1'),
@@ -168,7 +196,12 @@ describe('ExpireReservations', () => {
 
     const summary = await useCase.execute();
 
-    expect(summary.isOk() && summary.value).toEqual({ expired: 0, settled: 0, deferred: 1 });
+    expect(summary.isOk() && summary.value).toEqual({
+      expired: 0,
+      settled: 0,
+      deferred: 1,
+      stale: 0,
+    });
   });
 
   it('reports a failure to read the overdue reservations', async () => {
@@ -180,5 +213,61 @@ describe('ExpireReservations', () => {
     const summary = await useCase.execute();
 
     expect(summary.isErr()).toBe(true);
+  });
+
+  it('pages past payments stuck at the gateway, so newer abandoned checkouts still expire', async () => {
+    const products = new InMemoryProductRepository([
+      aProduct({ id: 'prod-01', available: 0, reserved: ExpireReservations.BATCH_SIZE + 1 }),
+    ]);
+    const transactions = new InMemoryTransactionRepository(products);
+    const claimTime = new Date(NOW.getTime() + 60_000);
+
+    // A full page of the oldest reservations, each with a payment in flight.
+    for (let i = 0; i < ExpireReservations.BATCH_SIZE; i += 1) {
+      const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+      await transactions.create(claimedAt(claimTime, `gw-${i}`)(aTransaction({ id })));
+    }
+    // And one newer checkout, simply abandoned, behind them.
+    const newer = aTransaction({ id: 'ffffffff-0000-4000-8000-000000000000' });
+    await transactions.create(
+      Transaction.restore({
+        id: newer.id,
+        status: 'PENDING',
+        product: newer.product,
+        quote: newer.quote,
+        customer: newer.customer,
+        deliveryAddress: newer.deliveryAddress,
+        createdAt: newer.createdAt,
+        updatedAt: newer.updatedAt,
+        reservationExpiresAt: new Date(newer.reservationExpiresAt.getTime() + 1_000),
+        version: 0,
+      }),
+    );
+    const clock = { now: (): Date => PAST_DEADLINE };
+    const useCase = new ExpireReservations(
+      transactions,
+      new FakePaymentGateway(),
+      new SettleTransaction(transactions, clock),
+      clock,
+    );
+
+    const summary = await useCase.execute();
+
+    expect(summary.isOk() && summary.value.expired).toBe(1);
+    expect(summary.isOk() && summary.value.deferred).toBe(ExpireReservations.BATCH_SIZE);
+  });
+
+  it('stops paging after a page fails, keeping what it already did', async () => {
+    const { useCase, transactions } = await setup();
+    const find = jest.spyOn(transactions, 'findExpiredReservations');
+    find.mockImplementationOnce(() =>
+      ResultAsync.ok(Array.from({ length: ExpireReservations.BATCH_SIZE }, () => aTransaction())),
+    );
+    find.mockImplementationOnce(() => ResultAsync.err(new CheckoutUnavailable('down')));
+
+    const summary = await useCase.execute();
+
+    expect(summary.isOk()).toBe(true);
+    expect(find).toHaveBeenCalledTimes(2);
   });
 });

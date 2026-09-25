@@ -34,21 +34,24 @@ export class FindTransaction {
   private refresh(
     transaction: Transaction,
   ): ResultAsync<Transaction, TransactionNotFound | CheckoutUnavailable> {
-    const gatewayTransactionId = transaction.gatewayTransactionId;
-
-    if (transaction.isFinal || gatewayTransactionId === undefined) {
+    if (transaction.isFinal || !transaction.paymentSubmitted) {
       return ResultAsync.ok(transaction);
     }
 
-    return this.gateway
-      .find(gatewayTransactionId)
+    // Normally by the gateway's id. When the charge was accepted but its id
+    // could not be recorded, by our reference: otherwise the buyer would watch
+    // PENDING until the expiry job found it, long after the gateway had
+    // answered.
+    const lookup =
+      transaction.gatewayTransactionId === undefined
+        ? this.gateway.findByReference(transaction.reference)
+        : this.gateway.find(transaction.gatewayTransactionId);
+
+    return lookup
       .andThen((payment) =>
-        this.settle.applyTo(transaction, {
-          reference: transaction.reference,
-          gatewayTransactionId: payment.gatewayTransactionId,
-          status: payment.status,
-          amountInCents: payment.amountInCents,
-        }),
+        payment === undefined
+          ? ResultAsync.ok<Transaction, never>(transaction)
+          : this.settle.applyTo(transaction, { reference: transaction.reference, ...payment }),
       )
       .orElse(() => ResultAsync.ok<Transaction, never>(transaction));
   }

@@ -103,10 +103,15 @@ export class InMemoryTransactionRepository implements TransactionRepository, Del
   findExpiredReservations(
     now: Date,
     limit: number,
+    after?: Transaction,
   ): ResultAsync<Transaction[], CheckoutUnavailable> {
+    // Ordered as the index orders them: by deadline, then by key.
+    const order = (t: Transaction): string => `${t.reservationExpiresAt.toISOString()}|${t.id}`;
+
     const expired = [...this.byId.values()]
       .filter((t) => !t.isFinal && t.reservationExpiresAt.getTime() < now.getTime())
-      .sort((a, b) => a.reservationExpiresAt.getTime() - b.reservationExpiresAt.getTime())
+      .filter((t) => after === undefined || order(t) > order(after))
+      .sort((a, b) => order(a).localeCompare(order(b)))
       .slice(0, limit);
 
     return ResultAsync.ok(expired);
