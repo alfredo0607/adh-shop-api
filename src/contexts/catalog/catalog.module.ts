@@ -3,10 +3,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
 import { CLOCK_PORT, type ClockPort } from '../../shared/domain/clock.port';
 import { ENVIRONMENT, type Environment } from '../../shared/infrastructure/config/environment';
-import {
-  DYNAMODB_CLIENT,
-  createDynamoDbClient,
-} from '../../shared/infrastructure/persistence/dynamodb.provider';
+import { DYNAMODB_CLIENT } from '../../shared/infrastructure/persistence/dynamodb.provider';
 import { FindProduct } from './application/find-product.usecase';
 import { IMAGE_URL_SIGNER, type ImageUrlSigner } from './application/image-url-signer.port';
 import { ListProducts } from './application/list-products.usecase';
@@ -30,12 +27,6 @@ import { DynamoProductRepository } from './infrastructure/persistence/dynamo-pro
 @Module({
   controllers: [ProductController],
   providers: [
-    {
-      provide: DYNAMODB_CLIENT,
-      inject: [ENVIRONMENT],
-      useFactory: (environment: Environment): DynamoDBDocumentClient =>
-        createDynamoDbClient(environment),
-    },
     {
       provide: PRODUCT_REPOSITORY,
       inject: [DYNAMODB_CLIENT, ENVIRONMENT],

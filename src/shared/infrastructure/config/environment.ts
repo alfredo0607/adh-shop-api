@@ -35,6 +35,12 @@ export const environmentSchema = z
     /** Fees are pricing policy, not code. Amounts are integer cents, never floats. */
     BASE_FEE_IN_CENTS: z.coerce.number().int().nonnegative().default(500_00),
     DELIVERY_FEE_IN_CENTS: z.coerce.number().int().nonnegative().default(1_200_00),
+    /**
+     * How long units stay reserved for an unpaid transaction. Long enough to
+     * type a card number and pass a bank challenge; short enough that an
+     * abandoned checkout does not keep the last unit off the shelf.
+     */
+    RESERVATION_TTL_MINUTES: z.coerce.number().int().positive().max(120).default(15),
 
     CORS_ALLOWED_ORIGINS: z.string().default(''),
     RATE_LIMIT_TTL_MS: z.coerce.number().int().positive().default(60_000),
