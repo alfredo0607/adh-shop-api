@@ -109,6 +109,12 @@ failed, so it is a status in a 200 body, never an error. `400` is for a request 
 cannot be read, and `422` for one that can be read but is semantically invalid. The
 complete contract, with examples, is in [Swagger](https://adh-api.alfredo-dominguez.dev/api/docs).
 
+**Customers have no endpoint of their own, on purpose.** They are created or updated
+(upserted by email) when a transaction is opened, and are visible through the
+transaction and its delivery with the email and phone masked. The brief has no user
+accounts, so a `GET /customers/{id}` would hand anyone holding an id a person's full
+contact details. Customer data is reached only through the order it belongs to.
+
 ## Architecture
 
 Hexagonal architecture (ports and adapters) with Railway Oriented Programming. Two
