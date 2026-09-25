@@ -168,6 +168,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       [HttpStatus.CONFLICT]: 'CONFLICT',
       [HttpStatus.UNPROCESSABLE_ENTITY]: 'VALIDATION_FAILED',
       [HttpStatus.TOO_MANY_REQUESTS]: 'RATE_LIMITED',
+      [HttpStatus.SERVICE_UNAVAILABLE]: 'SERVICE_UNAVAILABLE',
     };
 
     return codes[status] ?? 'ERROR';
