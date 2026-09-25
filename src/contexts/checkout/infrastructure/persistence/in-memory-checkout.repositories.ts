@@ -100,6 +100,18 @@ export class InMemoryTransactionRepository implements TransactionRepository, Del
     });
   }
 
+  findExpiredReservations(
+    now: Date,
+    limit: number,
+  ): ResultAsync<Transaction[], CheckoutUnavailable> {
+    const expired = [...this.byId.values()]
+      .filter((t) => !t.isFinal && t.reservationExpiresAt.getTime() < now.getTime())
+      .sort((a, b) => a.reservationExpiresAt.getTime() - b.reservationExpiresAt.getTime())
+      .slice(0, limit);
+
+    return ResultAsync.ok(expired);
+  }
+
   findByTransactionId(
     transactionId: string,
   ): ResultAsync<Delivery, DeliveryNotFound | CheckoutUnavailable> {

@@ -1,7 +1,7 @@
 import type { ResultAsync } from '../../../shared/domain';
 
 import type { PaymentGatewayUnavailable, PaymentRejected } from './checkout.errors';
-import type { TransactionStatus } from './transaction';
+import type { GatewayStatus } from './transaction';
 
 /**
  * What the buyer must accept before being charged, and how the storefront
@@ -27,7 +27,7 @@ export interface CardCharge {
 
 export interface GatewayPayment {
   readonly gatewayTransactionId: string;
-  readonly status: TransactionStatus;
+  readonly status: GatewayStatus;
   readonly amountInCents: number;
 }
 
@@ -43,6 +43,15 @@ export interface PaymentGatewayPort {
   ): ResultAsync<GatewayPayment, PaymentRejected | PaymentGatewayUnavailable>;
 
   find(gatewayTransactionId: string): ResultAsync<GatewayPayment, PaymentGatewayUnavailable>;
+
+  /**
+   * Looks a payment up by our reference, for when the charge call timed out
+   * before the gateway's id came back. `undefined` means the gateway has no
+   * payment with that reference.
+   */
+  findByReference(
+    reference: string,
+  ): ResultAsync<GatewayPayment | undefined, PaymentGatewayUnavailable>;
 }
 
 export const PAYMENT_GATEWAY_PORT = Symbol('PaymentGatewayPort');

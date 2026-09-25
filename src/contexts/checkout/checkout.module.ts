@@ -8,6 +8,7 @@ import { DYNAMODB_CLIENT } from '../../shared/infrastructure/persistence/dynamod
 import { CatalogModule } from '../catalog/catalog.module';
 import { PRODUCT_REPOSITORY, type ProductRepository } from '../catalog/domain/product.repository';
 import { type CheckoutPolicy, CreateTransaction } from './application/create-transaction.usecase';
+import { ExpireReservations } from './application/expire-reservations.usecase';
 import { FindDelivery, FindTransaction } from './application/find-transaction.usecase';
 import { GetPaymentTerms } from './application/get-payment-terms.usecase';
 import { PayTransaction } from './application/pay-transaction.usecase';
@@ -33,6 +34,10 @@ import { HttpPaymentGateway } from './infrastructure/payment/http-payment.gatewa
 import { PaymentEventVerifier } from './infrastructure/payment/payment-event.verifier';
 import { DynamoCustomerRepository } from './infrastructure/persistence/dynamo-customer.repository';
 import { DynamoDeliveryRepository } from './infrastructure/persistence/dynamo-delivery.repository';
+import {
+  ReservationSweeper,
+  SWEEP_INTERVAL_MS,
+} from './infrastructure/scheduling/reservation-sweeper';
 import { DynamoTransactionRepository } from './infrastructure/persistence/dynamo-transaction.repository';
 
 const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
@@ -159,6 +164,23 @@ const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
       inject: [DELIVERY_REPOSITORY],
       useFactory: (deliveries: DeliveryRepository): FindDelivery => new FindDelivery(deliveries),
     },
+    {
+      provide: ExpireReservations,
+      inject: [TRANSACTION_REPOSITORY, PAYMENT_GATEWAY_PORT, SettleTransaction, CLOCK_PORT],
+      useFactory: (
+        transactions: TransactionRepository,
+        gateway: PaymentGatewayPort,
+        settle: SettleTransaction,
+        clock: ClockPort,
+      ): ExpireReservations => new ExpireReservations(transactions, gateway, settle, clock),
+    },
+    {
+      provide: SWEEP_INTERVAL_MS,
+      inject: [ENVIRONMENT],
+      useFactory: (environment: Environment): number =>
+        environment.RESERVATION_SWEEP_INTERVAL_SECONDS * 1000,
+    },
+    ReservationSweeper,
     {
       provide: PAYMENT_EVENT_VERIFIER,
       inject: [ENVIRONMENT, CLOCK_PORT],

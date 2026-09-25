@@ -6,14 +6,14 @@ import {
   type TransactionNotFound,
 } from '../domain/checkout.errors';
 import { Delivery } from '../domain/delivery';
-import type { Transaction, TransactionStatus } from '../domain/transaction';
+import type { GatewayStatus, Transaction } from '../domain/transaction';
 import type { TransactionRepository } from '../domain/transaction.repository';
 
 export interface PaymentOutcome {
   /** Our transaction id, sent to the gateway as the payment reference. */
   readonly reference: string;
   readonly gatewayTransactionId: string;
-  readonly status: TransactionStatus;
+  readonly status: GatewayStatus;
   readonly amountInCents: number;
 }
 

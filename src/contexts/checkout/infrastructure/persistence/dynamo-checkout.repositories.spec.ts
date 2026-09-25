@@ -257,6 +257,39 @@ describe('DynamoTransactionRepository settlement', () => {
   });
 });
 
+describe('DynamoTransactionRepository expired reservations', () => {
+  it('reads overdue reservations from the sparse index by deadline', async () => {
+    const overdue = toItem(aTransaction());
+    const { client, sent } = buildClient(() => ({
+      Items: [overdue, { ...overdue, country: 'XX' }],
+    }));
+
+    const result = await new DynamoTransactionRepository(client, 'table').findExpiredReservations(
+      NOW,
+      25,
+    );
+
+    expect(sent[0]?.input).toMatchObject({
+      IndexName: 'GSI1',
+      KeyConditionExpression: 'GSI1PK = :pending AND GSI1SK < :now',
+      Limit: 25,
+    });
+    // The malformed second row is skipped, not allowed to block the rest.
+    expect(result.isOk() && result.value.map((t) => t.id)).toEqual([overdue.id]);
+  });
+
+  it('translates a store failure', async () => {
+    const { client } = buildClient(() => new Error('throttled'));
+
+    const result = await new DynamoTransactionRepository(client, 'table').findExpiredReservations(
+      NOW,
+      25,
+    );
+
+    expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
+  });
+});
+
 describe('DynamoDeliveryRepository', () => {
   const approved = aTransaction().settle('APPROVED', NOW);
   if (approved === undefined) throw new Error('fixture should settle');

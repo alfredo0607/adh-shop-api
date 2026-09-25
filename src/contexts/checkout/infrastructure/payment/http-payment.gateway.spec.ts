@@ -152,6 +152,39 @@ describe('HttpPaymentGateway', () => {
     });
   });
 
+  describe('findByReference', () => {
+    it('searches with the private key, preferring an approval if there are several', async () => {
+      respond(200, {
+        data: [
+          { id: 'gw-1', status: 'DECLINED', amount_in_cents: 100 },
+          { id: 'gw-2', status: 'APPROVED', amount_in_cents: 100 },
+        ],
+      });
+
+      const result = await new HttpPaymentGateway(config).findByReference('ref 1');
+
+      expect(sentRequest().url).toBe('https://gateway.test/v1/transactions?reference=ref%201');
+      expect(sentRequest().init.headers['Authorization']).toBe('Bearer prv_test_key');
+      expect(result.isOk() && result.value?.gatewayTransactionId).toBe('gw-2');
+    });
+
+    it('answers undefined when the gateway has no such payment', async () => {
+      respond(200, { data: [] });
+
+      const result = await new HttpPaymentGateway(config).findByReference('ref-1');
+
+      expect(result.isOk() && result.value).toBeUndefined();
+    });
+
+    it('treats an unexpected answer as the gateway being unavailable', async () => {
+      respond(401, { error: { type: 'NOT_AUTHORIZED' } });
+
+      const result = await new HttpPaymentGateway(config).findByReference('ref-1');
+
+      expect(result.isErr() && result.error.code).toBe('PAYMENT_GATEWAY_UNAVAILABLE');
+    });
+  });
+
   describe('find', () => {
     it('reads the status of a payment', async () => {
       respond(200, { data: { id: 'gw 1', status: 'APPROVED', amount_in_cents: 100 } });

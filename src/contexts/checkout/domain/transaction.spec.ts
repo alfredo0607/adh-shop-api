@@ -69,6 +69,33 @@ describe('Transaction', () => {
     });
   });
 
+  describe('expire', () => {
+    it('closes an unpaid reservation once its deadline has passed', () => {
+      expect(aTransaction().expire(later(TTL_MS))?.status).toBe('EXPIRED');
+    });
+
+    it('does not expire before the deadline', () => {
+      expect(aTransaction().expire(later(TTL_MS - 1))).toBeUndefined();
+    });
+
+    it('does not expire a payment in flight unless told it was abandoned', () => {
+      const claimed = aTransaction().claimPayment(later(1_000));
+      if (claimed.isErr()) throw new Error('claim should succeed');
+
+      expect(claimed.value.expire(later(TTL_MS))).toBeUndefined();
+      expect(claimed.value.expire(later(TTL_MS), { paymentAbandoned: true })?.status).toBe(
+        'EXPIRED',
+      );
+    });
+
+    it('never touches a final transaction', () => {
+      const approved = aTransaction().settle('APPROVED', later(1_000));
+
+      expect(approved?.expire(later(TTL_MS))).toBeUndefined();
+      expect(approved?.settle('DECLINED', later(2_000))).toBeUndefined();
+    });
+  });
+
   it('records the gateway id, and can release a claim that charged nothing', () => {
     const claimed = aTransaction().claimPayment(later(1_000));
     if (claimed.isErr()) throw new Error('claim should succeed');

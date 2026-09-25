@@ -7,10 +7,17 @@ import type { Quote } from './quote';
 
 /**
  * PENDING until the payment gateway reports an outcome; every other status is
- * final. VOIDED and ERROR are the gateway's own terms and are kept as such, so
+ * final. APPROVED to ERROR are the gateway's own terms and are kept as such, so
  * a status read back from it never has to be translated into a guess.
+ *
+ * EXPIRED is this service's: the reservation ran out with no payment made, and
+ * the units went back on the shelf. The gateway never reports it.
  */
-export type TransactionStatus = 'PENDING' | 'APPROVED' | 'DECLINED' | 'VOIDED' | 'ERROR';
+export type TransactionStatus =
+  'PENDING' | 'APPROVED' | 'DECLINED' | 'VOIDED' | 'ERROR' | 'EXPIRED';
+
+/** Statuses the payment gateway can report. */
+export type GatewayStatus = Exclude<TransactionStatus, 'EXPIRED'>;
 
 export interface PurchasedProduct {
   readonly id: string;
@@ -195,6 +202,25 @@ export class Transaction {
       // and the outcome arrived by other means.
       gatewayTransactionId: this.gatewayTransactionId ?? gatewayTransactionId,
     });
+  }
+
+  /**
+   * Closes a reservation that ran out without a payment.
+   *
+   * A transaction with a payment in flight is never expired on the clock
+   * alone: the charge may be about to succeed, and expiring it would return
+   * units the buyer has paid for. It expires only once the caller has
+   * established that the attempt came to nothing (`paymentAbandoned`).
+   */
+  expire(now: Date, options: { paymentAbandoned?: boolean } = {}): Transaction | undefined {
+    const deadlinePassed = now.getTime() >= this.reservationExpiresAt.getTime();
+    const nothingInFlight = !this.paymentSubmitted || options.paymentAbandoned === true;
+
+    if (this.isFinal || !deadlinePassed || !nothingInFlight) {
+      return undefined;
+    }
+
+    return this.with({ status: 'EXPIRED', updatedAt: now });
   }
 
   private with(changes: Partial<TransactionState>): Transaction {
