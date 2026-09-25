@@ -12,11 +12,31 @@ deployed to AWS.
 | OpenAPI document | https://adh-api.alfredo-dominguez.dev/api/docs-json                         |
 | Liveness / ready | `/health` · `/ready`                                                        |
 | Infrastructure   | [adh-shop-infra](https://github.com/alfredo0607/adh-shop-infra) (Terraform) |
+| Payment webhook  | `https://adh-api.alfredo-dominguez.dev/api/v1/payment-events`               |
+
+> [!IMPORTANT]
+> **Payment events webhook — for whoever can reach the sandbox merchant account**
+>
+> `https://adh-api.alfredo-dominguez.dev/api/v1/payment-events`
+>
+> The sandbox merchant account provided with the exercise is shared, and I could not
+> register this URL myself: its dashboard login currently answers `403` for me. If you
+> have access, set it as the **events URL** of the sandbox environment in the
+> merchant dashboard (Developers section), and the gateway will push every payment
+> outcome to the API.
+>
+> **Nothing depends on it.** While a submitted payment is `PENDING`,
+> `GET /transactions/{id}` asks the gateway for the outcome itself, so every payment
+> settles by polling alone — which is how every production test so far was settled.
+> The webhook only makes settlement faster and independent of the storefront. Events
+> are authenticated with the events secret (SHA-256 checksum compared in constant
+> time), and events older than 24 hours are refused.
 
 ---
 
 ## Contents
 
+0. [Exercise checklist](#exercise-checklist)
 1. [The checkout flow](#the-checkout-flow)
 2. [Endpoints](#endpoints)
 3. [Architecture](#architecture)
@@ -28,6 +48,68 @@ deployed to AWS.
 9. [Configuration](#configuration)
 10. [Deployment](#deployment)
 11. [Engineering documentation](#engineering-documentation)
+
+---
+
+## Exercise checklist
+
+Every point the exercise asks of the backend, and where it is met. The screens themselves
+(card form with brand detection, backdrop summary, responsive layout, Redux store) are
+built in [adh-shop-web](https://github.com/alfredo0607/adh-shop-web); the rows below cover
+the API those screens call.
+
+### Business process
+
+| #     | The exercise asks                                                 | Status | How                                                                                                                                |
+| ----- | ----------------------------------------------------------------- | :----: | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Show the product with its stock, description and price            |   ✅   | `GET /products` and `/products/{id}`: live stock, integer prices, images through signed, expiring CloudFront URLs                  |
+| 2–3   | Take credit card data, validated, with fake but well-formed cards |   ✅   | The card is tokenised by the gateway in the browser; the API accepts only the token and refuses anything shaped like a card number |
+| 3     | Take delivery information                                         |   ✅   | Validated in the domain: name, email, phone, address, city, region, optional postal code; deliveries within Colombia only          |
+| 4     | Summary: product amount + base fee + delivery fee                 |   ✅   | `GET /quotes` computes it on the server in integer cents; nothing is reserved yet                                                  |
+| 5.1   | Create a PENDING transaction and obtain its number                |   ✅   | `POST /transactions` → `201` with `Location`; units reserved atomically; the id doubles as the payment reference                   |
+| 5.2   | Call the payment gateway to complete the payment                  |   ✅   | `POST /transactions/{id}/payment`: idempotent (`Idempotency-Key`), amount signed with the integrity secret                         |
+| 5.3.1 | Update the transaction with the result                            |   ✅   | Settled by polling (`GET /transactions/{id}` asks the gateway) and by the signed webhook, whichever comes first                    |
+| 5.3.2 | Assign the product to be delivered                                |   ✅   | An approval creates the delivery in the same write; `GET /transactions/{id}/delivery`                                              |
+| 5.3.3 | Update the product's stock                                        |   ✅   | Approved: units sold. Declined or abandoned: units returned. Atomic with the status change                                         |
+| 6     | Show the final result, then the product with its updated stock    |   ✅   | `GET /transactions/{id}` for the outcome; `GET /products` reflects the new stock immediately                                       |
+
+### Responsibilities
+
+| The exercise asks                                               | Status | How                                                                                                                         |
+| --------------------------------------------------------------- | :----: | --------------------------------------------------------------------------------------------------------------------------- |
+| Overall API design and information architecture                 |   ✅   | Two bounded contexts, hexagonal layers, one DynamoDB table ([Architecture](#architecture), [Data model](#data-model))       |
+| Decide what each endpoint receives and returns; publish Swagger |   ✅   | Explicit request and response DTOs; public [Swagger](https://adh-api.alfredo-dominguez.dev/api/docs)                        |
+| Validations for real-life situations                            |   ✅   | Stale totals, two buyers for the last unit, retried payments, expired reservations, gateway outages, forged events          |
+| Handle sensitive data safely                                    |   ✅   | No card data, masked personal data, secrets in SSM, signed charges and events ([Security](#security))                       |
+| An API with stock, transactions, customers and deliveries       |   ✅   | All four persisted; customers deliberately reached only through their order ([Endpoints](#endpoints))                       |
+| Endpoints performing different types of requests                |   ✅   | `GET` and `POST`, answering `200`, `201`, `202`, `400`, `404`, `409`, `422`, `503` where each applies                       |
+| Resilient: recover the client's progress after a refresh        |   ✅   | The storefront keeps only the transaction id; `GET /transactions/{id}` returns the full state, including `paymentSubmitted` |
+
+### Backend development
+
+| The exercise asks                                              | Status | How                                                                                               |
+| -------------------------------------------------------------- | :----: | ------------------------------------------------------------------------------------------------- |
+| JavaScript/TypeScript with NestJS                              |   ✅   | NestJS 11, TypeScript in strict mode                                                              |
+| Business logic outside the routing/controller layer            |   ✅   | Controllers translate HTTP only; rules live on entities, orchestration in use cases               |
+| Hexagonal architecture, ports and adapters                     |   ✅   | Ports in `domain/`, adapters in `infrastructure/`; breaking the dependency rule fails the build   |
+| Railway Oriented Programming in the use cases                  |   ✅   | `Result` / `ResultAsync`, including compensation on the failure track (`orElse`)                  |
+| Any database, with the data model in the README                |   ✅   | DynamoDB single-table design with every access pattern ([Data model](#data-model))                |
+| Any ORM or serialisation library                               |   ✅   | AWS SDK DocumentClient; explicit response DTOs, so no entity is serialised by accident            |
+| Database seeded with dummy products, no create endpoint        |   ✅   | `pnpm seed`, idempotent; six products, one deliberately sold out                                  |
+| Unit tests with Jest, over 80% coverage, results in the README |   ✅   | **97.9%** statements across 479 tests ([Tests and coverage](#tests-and-coverage))                 |
+| Published on a cloud provider                                  |   ✅   | AWS: EC2, ECR, DynamoDB, ElastiCache, S3, CloudFront, SSM, CloudWatch ([Deployment](#deployment)) |
+| Sandbox mode only                                              |   ✅   | Sandbox keys and base URL, read from Parameter Store                                              |
+
+### Bonus points and considerations
+
+| The exercise asks                              | Status | How                                                                                                                                  |
+| ---------------------------------------------- | :----: | ------------------------------------------------------------------------------------------------------------------------------------ |
+| OWASP alignment, HTTPS and security headers    |   ✅   | Helmet and HSTS, strict CORS, input whitelist, a rate limit that cannot be bypassed at the origin                                    |
+| Clean code                                     |   ✅   | Lint and type checks in CI, no `any` in production code, a full audit with its findings fixed ([docs/audits](docs/audits/README.md)) |
+| Hexagonal architecture with ports and adapters |   ✅   | See above                                                                                                                            |
+| Railway Oriented Programming                   |   ✅   | See above                                                                                                                            |
+| Branches and pull requests per feature         |   ✅   | Every change landed through a pull request with CI                                                                                   |
+| Public repository, company name absent         |   ✅   | Public; the gateway is referred to generically throughout                                                                            |
 
 ---
 
@@ -108,6 +190,12 @@ HTTP semantics are deliberate: a declined card is a **successful request** whose
 failed, so it is a status in a 200 body, never an error. `400` is for a request that
 cannot be read, and `422` for one that can be read but is semantically invalid. The
 complete contract, with examples, is in [Swagger](https://adh-api.alfredo-dominguez.dev/api/docs).
+
+**Customers have no endpoint of their own, on purpose.** They are created or updated
+(upserted by email) when a transaction is opened, and are visible through the
+transaction and its delivery with the email and phone masked. The brief has no user
+accounts, so a `GET /customers/{id}` would hand anyone holding an id a person's full
+contact details. Customer data is reached only through the order it belongs to.
 
 ## Architecture
 
