@@ -58,9 +58,9 @@ export const environmentSchema = z
      * high and a caller can forge X-Forwarded-For to look like a different
      * address on every request, evading the limiter entirely.
      *
-     * 0 for direct connections, which is correct locally. Behind CloudFront and
-     * nginx it is 2: CloudFront sets the client address, nginx appends
-     * CloudFront's.
+     * 0 for direct connections, which is correct locally. Behind Cloudflare and
+     * nginx it is 2: Cloudflare sets the client address, nginx appends
+     * Cloudflare's.
      */
     TRUST_PROXY_HOPS: z.coerce.number().int().nonnegative().max(10).default(0),
 

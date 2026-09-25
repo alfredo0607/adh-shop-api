@@ -145,6 +145,7 @@ jobs:
             -e CDN_DOMAIN=cdn.invalid \
             -e CDN_KEY_PAIR_ID=ci \
             -e CDN_PRIVATE_KEY_BASE64=Y2k= \
+            -e CORS_ALLOWED_ORIGINS=https://storefront.test \
             adh-shop-api:${{ github.sha }}
 
           for attempt in $(seq 1 30); do
@@ -153,6 +154,16 @@ jobs:
               curl -fsS http://127.0.0.1:3000/ready
               # The README links the live API docs; losing them breaks a deliverable.
               curl -fsS http://127.0.0.1:3000/api/docs-json > /dev/null
+
+              # The storefront is on another origin: a browser sends a preflight
+              # before every write, and refuses the call without this answer.
+              preflight=$(curl -fsS -o /dev/null -D - -X OPTIONS \
+                -H 'Origin: https://storefront.test' \
+                -H 'Access-Control-Request-Method: POST' \
+                -H 'Access-Control-Request-Headers: content-type,idempotency-key' \
+                http://127.0.0.1:3000/api/v1/transactions)
+              echo "$preflight" | grep -qi '^access-control-allow-origin: https://storefront.test' \
+                || { echo "CORS preflight not answered for the storefront origin"; echo "$preflight"; exit 1; }
               exit 0
             fi
             sleep 2

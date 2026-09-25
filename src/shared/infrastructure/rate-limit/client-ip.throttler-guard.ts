@@ -6,7 +6,7 @@ import type { Request } from 'express';
  * Rate limits by the caller's address rather than by whoever last forwarded
  * the request.
  *
- * Behind CloudFront and nginx, the socket's remote address is the proxy, not
+ * Behind Cloudflare and nginx, the socket's remote address is the proxy, not
  * the client. Counting that address puts every caller in the world into a
  * single bucket: the limit is reached almost immediately and then everyone is
  * blocked, so a rate limiter meant to prevent denial of service becomes the
