@@ -1,7 +1,17 @@
-import { GetCommand, PutCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import {
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+  type DynamoDBDocumentClient,
+} from '@aws-sdk/lib-dynamodb';
 
 import { ResultAsync, err, type Result } from '../../../../shared/domain';
-import { CheckoutUnavailable, TransactionNotFound } from '../../domain/checkout.errors';
+import {
+  CheckoutUnavailable,
+  TransactionNotFound,
+  TransactionNotPayable,
+} from '../../domain/checkout.errors';
 import { Customer } from '../../domain/customer';
 import { DeliveryAddress } from '../../domain/delivery-address';
 import { Quote } from '../../domain/quote';
@@ -56,6 +66,8 @@ export interface TransactionItem {
   createdAt: string;
   updatedAt: string;
   reservationExpiresAt: string;
+  paymentClaimedAt?: string;
+  gatewayTransactionId?: string;
   version: number;
 }
 
@@ -97,6 +109,68 @@ export class DynamoTransactionRepository implements TransactionRepository {
       return toDomain(response.Item as TransactionItem);
     });
   }
+
+  claimPayment(
+    transaction: Transaction,
+  ): ResultAsync<Transaction, TransactionNotPayable | CheckoutUnavailable> {
+    return ResultAsync.fromPromise(
+      this.client.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: key(transaction.id),
+          UpdateExpression:
+            'SET #paymentClaimedAt = :claimedAt, #updatedAt = :updatedAt, #version = :version',
+          // Evaluated by DynamoDB while it holds the item: of two concurrent
+          // claims, exactly one satisfies this.
+          ConditionExpression:
+            'attribute_exists(PK) AND #status = :pending AND attribute_not_exists(#paymentClaimedAt)',
+          ExpressionAttributeNames: {
+            '#paymentClaimedAt': 'paymentClaimedAt',
+            '#updatedAt': 'updatedAt',
+            '#version': 'version',
+            '#status': 'status',
+          },
+          ExpressionAttributeValues: {
+            ':claimedAt': transaction.paymentClaimedAt?.toISOString(),
+            ':updatedAt': transaction.updatedAt.toISOString(),
+            ':version': transaction.version,
+            ':pending': 'PENDING',
+          },
+        }),
+      ),
+      (cause): TransactionNotPayable | CheckoutUnavailable =>
+        cause instanceof ConditionalCheckFailedException
+          ? new TransactionNotPayable(transaction.id, 'ALREADY_SUBMITTED')
+          : new CheckoutUnavailable('Could not claim the payment', cause),
+    ).map(() => transaction);
+  }
+
+  /**
+   * Replaces the stored transaction, guarded by its version.
+   *
+   * The condition is the optimistic lock: if anything else wrote the row since
+   * this copy was read, the write is refused rather than silently undoing it.
+   */
+  update(transaction: Transaction): ResultAsync<Transaction, CheckoutUnavailable> {
+    return ResultAsync.fromPromise(
+      this.client.send(
+        new PutCommand({
+          TableName: this.tableName,
+          Item: toItem(transaction),
+          ConditionExpression: '#version = :previous',
+          ExpressionAttributeNames: { '#version': 'version' },
+          ExpressionAttributeValues: { ':previous': transaction.version - 1 },
+        }),
+      ),
+      (cause) =>
+        new CheckoutUnavailable(
+          cause instanceof ConditionalCheckFailedException
+            ? 'The transaction changed while it was being updated'
+            : 'Could not update the transaction',
+          cause,
+        ),
+    ).map(() => transaction);
+  }
 }
 
 export const toItem = (transaction: Transaction): TransactionItem => {
@@ -134,6 +208,12 @@ export const toItem = (transaction: Transaction): TransactionItem => {
     createdAt: transaction.createdAt.toISOString(),
     updatedAt: transaction.updatedAt.toISOString(),
     reservationExpiresAt: transaction.reservationExpiresAt.toISOString(),
+    ...(transaction.paymentClaimedAt === undefined
+      ? {}
+      : { paymentClaimedAt: transaction.paymentClaimedAt.toISOString() }),
+    ...(transaction.gatewayTransactionId === undefined
+      ? {}
+      : { gatewayTransactionId: transaction.gatewayTransactionId }),
     version: transaction.version,
   };
 };
@@ -157,6 +237,9 @@ export const toDomain = (item: TransactionItem): Result<Transaction, CheckoutUna
         createdAt: new Date(item.createdAt),
         updatedAt: new Date(item.updatedAt),
         reservationExpiresAt: new Date(item.reservationExpiresAt),
+        paymentClaimedAt:
+          item.paymentClaimedAt === undefined ? undefined : new Date(item.paymentClaimedAt),
+        gatewayTransactionId: item.gatewayTransactionId,
         version: item.version,
       }),
     );

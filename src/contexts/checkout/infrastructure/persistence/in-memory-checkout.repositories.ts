@@ -1,5 +1,9 @@
 import { ResultAsync, err } from '../../../../shared/domain';
-import { type CheckoutUnavailable, TransactionNotFound } from '../../domain/checkout.errors';
+import {
+  type CheckoutUnavailable,
+  TransactionNotFound,
+  TransactionNotPayable,
+} from '../../domain/checkout.errors';
 import { Customer, type CustomerDetails } from '../../domain/customer';
 import type { CustomerRepository } from '../../domain/customer.repository';
 import type { Transaction } from '../../domain/transaction';
@@ -37,5 +41,25 @@ export class InMemoryTransactionRepository implements TransactionRepository {
     return transaction === undefined
       ? ResultAsync.fromResult(err(new TransactionNotFound(id)))
       : ResultAsync.ok(transaction);
+  }
+
+  claimPayment(
+    transaction: Transaction,
+  ): ResultAsync<Transaction, TransactionNotPayable | CheckoutUnavailable> {
+    const stored = this.byId.get(transaction.id);
+
+    if (stored === undefined || stored.isFinal || stored.paymentSubmitted) {
+      return ResultAsync.fromResult(
+        err(new TransactionNotPayable(transaction.id, 'ALREADY_SUBMITTED')),
+      );
+    }
+
+    this.byId.set(transaction.id, transaction);
+    return ResultAsync.ok(transaction);
+  }
+
+  update(transaction: Transaction): ResultAsync<Transaction, CheckoutUnavailable> {
+    this.byId.set(transaction.id, transaction);
+    return ResultAsync.ok(transaction);
   }
 }

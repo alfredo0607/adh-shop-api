@@ -6,6 +6,7 @@ import { CheckoutModule } from './contexts/checkout/checkout.module';
 import { ConfigModule } from './shared/infrastructure/config/config.module';
 import { ENVIRONMENT, type Environment } from './shared/infrastructure/config/environment';
 import { buildLoggerOptions } from './shared/infrastructure/observability/logger.config';
+import { IdempotencyModule } from './shared/infrastructure/idempotency/idempotency.module';
 import { RateLimitModule } from './shared/infrastructure/rate-limit/rate-limit.module';
 import { SharedModule } from './shared/shared.module';
 
@@ -20,6 +21,7 @@ import { SharedModule } from './shared/shared.module';
     }),
 
     RateLimitModule,
+    IdempotencyModule,
 
     CatalogModule,
     CheckoutModule,
