@@ -1,3 +1,4 @@
+import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
 import { NOW, aTransaction } from '../../__fixtures__/checkout.fixture';
@@ -91,6 +92,78 @@ describe('DynamoTransactionRepository', () => {
         : await repository.findById('x');
 
     expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
+  });
+});
+
+describe('DynamoTransactionRepository payment writes', () => {
+  const conditionFailed = (): ConditionalCheckFailedException =>
+    new ConditionalCheckFailedException({ message: 'failed', $metadata: {} });
+
+  const claimed = (): ReturnType<typeof aTransaction> => {
+    const result = aTransaction().claimPayment(new Date(NOW.getTime() + 1_000));
+    if (result.isErr()) throw new Error('claim should succeed');
+    return result.value;
+  };
+
+  it('claims only a PENDING transaction that nobody has claimed yet', async () => {
+    const { client, sent } = buildClient(() => ({}));
+
+    const result = await new DynamoTransactionRepository(client, 'table').claimPayment(claimed());
+
+    expect(result.isOk()).toBe(true);
+    expect(sent[0]?.input['ConditionExpression']).toBe(
+      'attribute_exists(PK) AND #status = :pending AND attribute_not_exists(#paymentClaimedAt)',
+    );
+  });
+
+  it('tells the loser of a claim race that the transaction is no longer payable', async () => {
+    const { client } = buildClient(() => conditionFailed());
+
+    const result = await new DynamoTransactionRepository(client, 'table').claimPayment(claimed());
+
+    expect(result.isErr() && result.error.code).toBe('TRANSACTION_NOT_PAYABLE');
+  });
+
+  it('translates any other failure while claiming', async () => {
+    const { client } = buildClient(() => new Error('throttled'));
+
+    const result = await new DynamoTransactionRepository(client, 'table').claimPayment(claimed());
+
+    expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
+  });
+
+  it('updates under an optimistic lock on the previous version', async () => {
+    const { client, sent } = buildClient(() => ({}));
+    const recorded = claimed().recordGatewayPayment('gw-1', NOW);
+
+    await new DynamoTransactionRepository(client, 'table').update(recorded);
+
+    expect(sent[0]?.input['ConditionExpression']).toBe('#version = :previous');
+    expect(sent[0]?.input['ExpressionAttributeValues']).toEqual({
+      ':previous': recorded.version - 1,
+    });
+    expect((sent[0]?.input['Item'] as TransactionItem).gatewayTransactionId).toBe('gw-1');
+  });
+
+  it.each([
+    ['a concurrent write', conditionFailed()],
+    ['a store failure', new Error('throttled')],
+  ])('reports %s during an update as unavailable', async (_case, failure) => {
+    const { client } = buildClient(() => failure);
+
+    const result = await new DynamoTransactionRepository(client, 'table').update(claimed());
+
+    expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
+  });
+
+  it('round-trips the payment fields', async () => {
+    const recorded = claimed().recordGatewayPayment('gw-1', NOW);
+    const { client } = buildClient(() => ({ Item: toItem(recorded) }));
+
+    const result = await new DynamoTransactionRepository(client, 'table').findById(recorded.id);
+
+    expect(result.isOk() && result.value.gatewayTransactionId).toBe('gw-1');
+    expect(result.isOk() && result.value.paymentClaimedAt).toEqual(recorded.paymentClaimedAt);
   });
 });
 

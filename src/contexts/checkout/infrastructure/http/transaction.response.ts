@@ -113,6 +113,14 @@ export class TransactionResponse {
   @ApiProperty({ enum: STATUSES, example: 'PENDING' })
   readonly status!: TransactionStatus;
 
+  @ApiProperty({
+    example: false,
+    description:
+      'Whether a payment was already sent for this transaction. After a refresh, the ' +
+      'storefront uses it to wait for the outcome instead of asking for the card again.',
+  })
+  readonly paymentSubmitted!: boolean;
+
   @ApiProperty({ type: PurchasedProductResponse })
   readonly product!: PurchasedProductResponse;
 
@@ -144,6 +152,7 @@ export class TransactionResponse {
       id: transaction.id,
       reference: transaction.reference,
       status: transaction.status,
+      paymentSubmitted: transaction.paymentSubmitted,
       product: {
         id: transaction.product.id,
         name: transaction.product.name,

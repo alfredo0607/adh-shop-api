@@ -9,15 +9,20 @@ import { CatalogModule } from '../catalog/catalog.module';
 import { PRODUCT_REPOSITORY, type ProductRepository } from '../catalog/domain/product.repository';
 import { type CheckoutPolicy, CreateTransaction } from './application/create-transaction.usecase';
 import { FindTransaction } from './application/find-transaction.usecase';
+import { GetPaymentTerms } from './application/get-payment-terms.usecase';
+import { PayTransaction } from './application/pay-transaction.usecase';
 import { QuoteCheckout } from './application/quote-checkout.usecase';
 import { CUSTOMER_REPOSITORY, type CustomerRepository } from './domain/customer.repository';
 import { INVENTORY_PORT, type InventoryPort } from './domain/inventory.port';
+import { PAYMENT_GATEWAY_PORT, type PaymentGatewayPort } from './domain/payment-gateway.port';
 import {
   TRANSACTION_REPOSITORY,
   type TransactionRepository,
 } from './domain/transaction.repository';
+import { PaymentController } from './infrastructure/http/payment.controller';
 import { TransactionController } from './infrastructure/http/transaction.controller';
 import { CatalogInventoryAdapter } from './infrastructure/inventory/catalog-inventory.adapter';
+import { HttpPaymentGateway } from './infrastructure/payment/http-payment.gateway';
 import { DynamoCustomerRepository } from './infrastructure/persistence/dynamo-customer.repository';
 import { DynamoTransactionRepository } from './infrastructure/persistence/dynamo-transaction.repository';
 
@@ -29,7 +34,7 @@ const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
  */
 @Module({
   imports: [CatalogModule],
-  controllers: [TransactionController],
+  controllers: [TransactionController, PaymentController],
   providers: [
     {
       provide: CHECKOUT_POLICY,
@@ -68,6 +73,32 @@ const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
         new DynamoTransactionRepository(client, environment.DYNAMODB_TABLE_NAME),
     },
     {
+      provide: PAYMENT_GATEWAY_PORT,
+      inject: [ENVIRONMENT],
+      useFactory: (environment: Environment): PaymentGatewayPort =>
+        new HttpPaymentGateway({
+          baseUrl: environment.PAYMENT_API_URL.replace(/\/+$/, ''),
+          publicKey: environment.PAYMENT_PUBLIC_KEY,
+          privateKey: environment.PAYMENT_PRIVATE_KEY,
+          integritySecret: environment.PAYMENT_INTEGRITY_SECRET,
+          timeoutMs: environment.PAYMENT_TIMEOUT_MS,
+        }),
+    },
+    {
+      provide: GetPaymentTerms,
+      inject: [PAYMENT_GATEWAY_PORT],
+      useFactory: (gateway: PaymentGatewayPort): GetPaymentTerms => new GetPaymentTerms(gateway),
+    },
+    {
+      provide: PayTransaction,
+      inject: [TRANSACTION_REPOSITORY, PAYMENT_GATEWAY_PORT, CLOCK_PORT],
+      useFactory: (
+        transactions: TransactionRepository,
+        gateway: PaymentGatewayPort,
+        clock: ClockPort,
+      ): PayTransaction => new PayTransaction(transactions, gateway, clock),
+    },
+    {
       provide: QuoteCheckout,
       inject: [INVENTORY_PORT, CHECKOUT_POLICY],
       useFactory: (inventory: InventoryPort, policy: CheckoutPolicy): QuoteCheckout =>
@@ -100,6 +131,6 @@ const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
         new FindTransaction(transactions),
     },
   ],
-  exports: [TRANSACTION_REPOSITORY, INVENTORY_PORT],
+  exports: [TRANSACTION_REPOSITORY, INVENTORY_PORT, PAYMENT_GATEWAY_PORT],
 })
 export class CheckoutModule {}
