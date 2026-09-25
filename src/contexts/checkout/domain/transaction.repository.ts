@@ -44,6 +44,12 @@ export interface TransactionRepository {
     settled: Transaction,
     delivery: Delivery | undefined,
   ): ResultAsync<Transaction, SettlementConflict | CheckoutUnavailable>;
+
+  /** PENDING transactions whose reservation deadline has passed, oldest first. */
+  findExpiredReservations(
+    now: Date,
+    limit: number,
+  ): ResultAsync<Transaction[], CheckoutUnavailable>;
 }
 
 export const TRANSACTION_REPOSITORY = Symbol('TransactionRepository');

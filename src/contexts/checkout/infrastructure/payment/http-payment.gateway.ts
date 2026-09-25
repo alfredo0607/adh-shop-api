@@ -39,6 +39,8 @@ const paymentSchema = z.object({
   }),
 });
 
+const paymentListSchema = z.object({ data: z.array(paymentSchema.shape.data) });
+
 const errorSchema = z.object({
   error: z.object({
     type: z.string(),
@@ -117,6 +119,39 @@ export class HttpPaymentGateway implements PaymentGatewayPort {
     return this.send('GET', `/transactions/${encodeURIComponent(gatewayTransactionId)}`).andThen(
       toPayment,
     );
+  }
+
+  findByReference(
+    reference: string,
+  ): ResultAsync<GatewayPayment | undefined, PaymentGatewayUnavailable> {
+    return this.send(
+      'GET',
+      `/transactions?reference=${encodeURIComponent(reference)}`,
+      undefined,
+      // Searching by reference is a merchant operation: it needs the private key.
+      this.config.privateKey,
+    ).andThen((response): Result<GatewayPayment | undefined, PaymentGatewayUnavailable> => {
+      const parsed = paymentListSchema.safeParse(response.body);
+
+      if (response.status !== 200 || !parsed.success) {
+        return err(unexpected('payment search', response));
+      }
+
+      // References are unique on our side, so more than one match should not
+      // happen. If it does, an approval is the fact that must not be lost.
+      const found =
+        parsed.data.data.find((payment) => payment.status === 'APPROVED') ?? parsed.data.data[0];
+
+      return ok(
+        found === undefined
+          ? undefined
+          : {
+              gatewayTransactionId: found.id,
+              status: found.status,
+              amountInCents: found.amount_in_cents,
+            },
+      );
+    });
   }
 
   /**

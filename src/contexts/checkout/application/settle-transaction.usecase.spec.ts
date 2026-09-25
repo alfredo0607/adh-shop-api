@@ -3,7 +3,7 @@ import { aProduct } from '../../catalog/__fixtures__/product.fixture';
 import { InMemoryProductRepository } from '../../catalog/infrastructure/persistence/in-memory-product.repository';
 import { NOW, TOTAL_FOR_ONE, aTransaction } from '../__fixtures__/checkout.fixture';
 import { CheckoutUnavailable, PaymentGatewayUnavailable } from '../domain/checkout.errors';
-import type { TransactionStatus } from '../domain/transaction';
+import type { GatewayStatus } from '../domain/transaction';
 import { FakePaymentGateway } from '../infrastructure/payment/fake-payment.gateway';
 import { InMemoryTransactionRepository } from '../infrastructure/persistence/in-memory-checkout.repositories';
 import { FindTransaction } from './find-transaction.usecase';
@@ -38,7 +38,7 @@ describe('SettleTransaction', () => {
     };
   };
 
-  const outcome = (status: TransactionStatus, amountInCents = TOTAL_FOR_ONE): PaymentOutcome => ({
+  const outcome = (status: GatewayStatus, amountInCents = TOTAL_FOR_ONE): PaymentOutcome => ({
     reference: ID,
     gatewayTransactionId: 'gw-1',
     status,

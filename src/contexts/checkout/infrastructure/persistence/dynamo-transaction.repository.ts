@@ -5,6 +5,7 @@ import {
 import {
   GetCommand,
   PutCommand,
+  QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
   type DynamoDBDocumentClient,
@@ -253,6 +254,41 @@ export class DynamoTransactionRepository implements TransactionRepository {
           ? new SettlementConflict(settled.id, cause)
           : new CheckoutUnavailable('Could not settle the transaction', cause),
     ).map(() => settled);
+  }
+
+  /**
+   * Reads the sparse index of open reservations, which holds only PENDING
+   * transactions and is sorted by deadline: "expired" is a range condition on
+   * the sort key, and nothing already settled is ever read.
+   *
+   * Index reads are eventually consistent. A row that settled a moment ago can
+   * still appear here; the settlement's conditional write is what makes acting
+   * on it safe.
+   */
+  findExpiredReservations(
+    now: Date,
+    limit: number,
+  ): ResultAsync<Transaction[], CheckoutUnavailable> {
+    return ResultAsync.fromPromise(
+      this.client.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: 'GSI1',
+          KeyConditionExpression: 'GSI1PK = :pending AND GSI1SK < :now',
+          ExpressionAttributeValues: {
+            ':pending': PENDING_PARTITION,
+            ':now': now.toISOString(),
+          },
+          Limit: limit,
+        }),
+      ),
+      (cause) => new CheckoutUnavailable('Could not read expired reservations', cause),
+    ).map((response) =>
+      ((response.Items ?? []) as TransactionItem[])
+        .map(toDomain)
+        // A malformed row is skipped rather than blocking every expiry behind it.
+        .flatMap((result) => (result.isOk() ? [result.value] : [])),
+    );
   }
 }
 

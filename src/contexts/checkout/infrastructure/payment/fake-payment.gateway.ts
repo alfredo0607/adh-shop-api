@@ -38,6 +38,16 @@ export class FakePaymentGateway implements PaymentGatewayPort {
   /** What `find` reports; PENDING until a test says otherwise. */
   nextFind: ResultAsync<GatewayPayment, PaymentGatewayUnavailable> | undefined;
 
+  /** What `findByReference` reports; nothing found unless a test says otherwise. */
+  nextFindByReference: ResultAsync<GatewayPayment | undefined, PaymentGatewayUnavailable> =
+    ResultAsync.ok(undefined);
+
+  findByReference(
+    _reference: string,
+  ): ResultAsync<GatewayPayment | undefined, PaymentGatewayUnavailable> {
+    return this.nextFindByReference;
+  }
+
   find(gatewayTransactionId: string): ResultAsync<GatewayPayment, PaymentGatewayUnavailable> {
     return (
       this.nextFind ?? ResultAsync.ok({ gatewayTransactionId, status: 'PENDING', amountInCents: 0 })

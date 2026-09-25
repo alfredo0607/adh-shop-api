@@ -3,7 +3,14 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { Quote } from '../../domain/quote';
 import type { Transaction, TransactionStatus } from '../../domain/transaction';
 
-const STATUSES: TransactionStatus[] = ['PENDING', 'APPROVED', 'DECLINED', 'VOIDED', 'ERROR'];
+const STATUSES: TransactionStatus[] = [
+  'PENDING',
+  'APPROVED',
+  'DECLINED',
+  'VOIDED',
+  'ERROR',
+  'EXPIRED',
+];
 
 export class AmountsResponse {
   @ApiProperty({ example: 89_990_00 })
