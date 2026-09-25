@@ -91,18 +91,19 @@ const bootstrap = async (): Promise<void> => {
   // whatever was being served at that moment.
   app.enableShutdownHooks();
 
-  if (environment.NODE_ENV !== 'production') {
-    const document = SwaggerModule.createDocument(
-      app,
-      new DocumentBuilder()
-        .setTitle('ADH Shop API')
-        .setDescription('Checkout API for the ADH Shop storefront')
-        .setVersion('1.0')
-        .build(),
-    );
+  // Published in production on purpose: the contract is public by design and
+  // reviewers need a live URL. It describes routes that are reachable anyway,
+  // holds no secrets, and every route still enforces its own validation.
+  const document = SwaggerModule.createDocument(
+    app,
+    new DocumentBuilder()
+      .setTitle('ADH Shop API')
+      .setDescription('Checkout API for the ADH Shop storefront')
+      .setVersion('1.0')
+      .build(),
+  );
 
-    SwaggerModule.setup('api/docs', app, document);
-  }
+  SwaggerModule.setup('api/docs', app, document);
 
   await app.listen(environment.PORT, '0.0.0.0');
 

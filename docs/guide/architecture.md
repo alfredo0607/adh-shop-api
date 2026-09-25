@@ -61,7 +61,7 @@ export class DynamoProductRepository implements ProductRepository {
 ```
 
 **Name ports after the need, never after the technology.** `PaymentGatewayPort`, not
-`WompiClient`. The domain should not be able to tell which vendor is behind the port —
+`AcmePayClient`. The domain should not be able to tell which vendor is behind the port —
 that is what makes the vendor replaceable, and on this project it is also a compliance
 requirement, since the brief forbids the provider's name in the repository.
 
