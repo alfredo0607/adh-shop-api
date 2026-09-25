@@ -1,5 +1,5 @@
 import type { ResultAsync } from '../../../shared/domain';
-import type { CatalogUnavailable } from '../domain/catalog.errors';
+import type { CatalogUnavailable, InvalidCursor } from '../domain/catalog.errors';
 import type { ProductPage, ProductRepository } from '../domain/product.repository';
 
 export interface ListProductsQuery {
@@ -22,7 +22,9 @@ export class ListProducts {
 
   constructor(private readonly products: ProductRepository) {}
 
-  execute(query: ListProductsQuery = {}): ResultAsync<ProductPage, CatalogUnavailable> {
+  execute(
+    query: ListProductsQuery = {},
+  ): ResultAsync<ProductPage, InvalidCursor | CatalogUnavailable> {
     const limit = Math.min(query.limit ?? ListProducts.DEFAULT_LIMIT, ListProducts.MAX_LIMIT);
 
     return this.products.findAll({ limit, cursor: query.cursor });

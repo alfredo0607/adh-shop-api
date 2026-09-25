@@ -3,6 +3,7 @@ import type { ResultAsync } from '../../../shared/domain';
 import type {
   CatalogUnavailable,
   InsufficientStock,
+  InvalidCursor,
   InvalidStock,
   ProductNotFound,
 } from './catalog.errors';
@@ -34,7 +35,7 @@ export interface ProductRepository {
   findAll(query: {
     limit: number;
     cursor?: string | undefined;
-  }): ResultAsync<ProductPage, CatalogUnavailable>;
+  }): ResultAsync<ProductPage, InvalidCursor | CatalogUnavailable>;
 
   findById(id: string): ResultAsync<Product, ProductNotFound | CatalogUnavailable>;
 
