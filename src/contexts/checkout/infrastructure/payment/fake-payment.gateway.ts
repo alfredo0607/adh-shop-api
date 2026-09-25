@@ -14,7 +14,7 @@ import type {
 export class FakePaymentGateway implements PaymentGatewayPort {
   readonly charges: CardCharge[] = [];
   nextCharge: ResultAsync<GatewayPayment, PaymentRejected | PaymentGatewayUnavailable> =
-    ResultAsync.ok({ gatewayTransactionId: 'gw-1', status: 'PENDING' });
+    ResultAsync.ok({ gatewayTransactionId: 'gw-1', status: 'PENDING', amountInCents: 0 });
 
   terms(): ResultAsync<PaymentTerms, PaymentGatewayUnavailable> {
     return ResultAsync.ok({
@@ -35,7 +35,12 @@ export class FakePaymentGateway implements PaymentGatewayPort {
     return this.nextCharge;
   }
 
+  /** What `find` reports; PENDING until a test says otherwise. */
+  nextFind: ResultAsync<GatewayPayment, PaymentGatewayUnavailable> | undefined;
+
   find(gatewayTransactionId: string): ResultAsync<GatewayPayment, PaymentGatewayUnavailable> {
-    return ResultAsync.ok({ gatewayTransactionId, status: 'PENDING' });
+    return (
+      this.nextFind ?? ResultAsync.ok({ gatewayTransactionId, status: 'PENDING', amountInCents: 0 })
+    );
   }
 }

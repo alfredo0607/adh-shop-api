@@ -86,7 +86,7 @@ describe('HttpPaymentGateway', () => {
 
   describe('charge', () => {
     it('signs the amount with the integrity secret and authenticates with the private key', async () => {
-      respond(201, { data: { id: 'gw-1', status: 'PENDING' } });
+      respond(201, { data: { id: 'gw-1', status: 'PENDING', amount_in_cents: 9_169_000 } });
 
       const result = await new HttpPaymentGateway(config).charge(charge);
 
@@ -106,6 +106,7 @@ describe('HttpPaymentGateway', () => {
       expect(result.isOk() && result.value).toEqual({
         gatewayTransactionId: 'gw-1',
         status: 'PENDING',
+        amountInCents: 9_169_000,
       });
     });
 
@@ -153,7 +154,7 @@ describe('HttpPaymentGateway', () => {
 
   describe('find', () => {
     it('reads the status of a payment', async () => {
-      respond(200, { data: { id: 'gw 1', status: 'APPROVED' } });
+      respond(200, { data: { id: 'gw 1', status: 'APPROVED', amount_in_cents: 100 } });
 
       const result = await new HttpPaymentGateway(config).find('gw 1');
 
@@ -162,7 +163,7 @@ describe('HttpPaymentGateway', () => {
     });
 
     it('refuses a status it does not know rather than guessing', async () => {
-      respond(200, { data: { id: 'gw-1', status: 'REFUNDED' } });
+      respond(200, { data: { id: 'gw-1', status: 'REFUNDED', amount_in_cents: 100 } });
 
       const result = await new HttpPaymentGateway(config).find('gw-1');
 

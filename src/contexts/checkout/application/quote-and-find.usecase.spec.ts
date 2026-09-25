@@ -4,6 +4,9 @@ import { FEES, TOTAL_FOR_ONE, aTransaction } from '../__fixtures__/checkout.fixt
 import { CatalogInventoryAdapter } from '../infrastructure/inventory/catalog-inventory.adapter';
 import { InMemoryTransactionRepository } from '../infrastructure/persistence/in-memory-checkout.repositories';
 import { FindTransaction } from './find-transaction.usecase';
+import { SettleTransaction } from './settle-transaction.usecase';
+import { FakePaymentGateway } from '../infrastructure/payment/fake-payment.gateway';
+import { NOW } from '../__fixtures__/checkout.fixture';
 import { QuoteCheckout } from './quote-checkout.usecase';
 
 describe('QuoteCheckout', () => {
@@ -53,13 +56,21 @@ describe('FindTransaction', () => {
     const stored = aTransaction();
     await transactions.create(stored);
 
-    const result = await new FindTransaction(transactions).execute(stored.id);
+    const result = await new FindTransaction(
+      transactions,
+      new FakePaymentGateway(),
+      new SettleTransaction(transactions, { now: (): Date => NOW }),
+    ).execute(stored.id);
 
     expect(result.isOk() && result.value).toBe(stored);
   });
 
   it('answers not found for an unknown id', async () => {
-    const result = await new FindTransaction(new InMemoryTransactionRepository()).execute('nope');
+    const result = await new FindTransaction(
+      new InMemoryTransactionRepository(),
+      new FakePaymentGateway(),
+      new SettleTransaction(new InMemoryTransactionRepository(), { now: (): Date => NOW }),
+    ).execute('nope');
 
     expect(result.isErr() && result.error.code).toBe('TRANSACTION_NOT_FOUND');
   });

@@ -2,9 +2,12 @@ import type { ResultAsync } from '../../../shared/domain';
 
 import type {
   CheckoutUnavailable,
+  DeliveryNotFound,
+  SettlementConflict,
   TransactionNotFound,
   TransactionNotPayable,
 } from './checkout.errors';
+import type { Delivery } from './delivery';
 import type { Transaction } from './transaction';
 
 export interface TransactionRepository {
@@ -27,6 +30,28 @@ export interface TransactionRepository {
 
   /** Persists a change to a transaction that has already been claimed. */
   update(transaction: Transaction): ResultAsync<Transaction, CheckoutUnavailable>;
+
+  /**
+   * Writes a final outcome and everything that follows from it, atomically.
+   *
+   * APPROVED confirms the reserved units as sold and creates the delivery; any
+   * other final status returns the units to the shelf. All of it happens in
+   * one write or not at all: an approval whose stock step failed would leave
+   * units reserved forever, and one without its delivery would take money for
+   * nothing.
+   */
+  saveSettlement(
+    settled: Transaction,
+    delivery: Delivery | undefined,
+  ): ResultAsync<Transaction, SettlementConflict | CheckoutUnavailable>;
 }
 
 export const TRANSACTION_REPOSITORY = Symbol('TransactionRepository');
+
+export interface DeliveryRepository {
+  findByTransactionId(
+    transactionId: string,
+  ): ResultAsync<Delivery, DeliveryNotFound | CheckoutUnavailable>;
+}
+
+export const DELIVERY_REPOSITORY = Symbol('DeliveryRepository');

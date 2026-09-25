@@ -28,6 +28,7 @@ export interface CardCharge {
 export interface GatewayPayment {
   readonly gatewayTransactionId: string;
   readonly status: TransactionStatus;
+  readonly amountInCents: number;
 }
 
 /**

@@ -71,9 +71,12 @@ export class PayTransaction {
       })
       .orElse((error) => this.afterFailedCharge(claimed, error))
       .andThen((payment) =>
-        this.transactions.update(
-          claimed.recordGatewayPayment(payment.gatewayTransactionId, this.clock.now()),
-        ),
+        this.transactions
+          .update(claimed.recordGatewayPayment(payment.gatewayTransactionId, this.clock.now()))
+          // The gateway's event can settle the transaction before this write
+          // lands, and the version check then refuses it. The payment itself
+          // went through; what is stored is the more recent truth.
+          .orElse(() => this.transactions.findById(claimed.id)),
       );
   }
 
