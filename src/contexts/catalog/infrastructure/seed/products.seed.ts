@@ -9,7 +9,8 @@ export interface ProductSeed {
 }
 
 /**
- * Dummy products the store is seeded with.
+ * Dummy products the store is seeded with. Names and descriptions are shown to
+ * buyers as they are, so they are written in Spanish (Colombia).
  *
  * The brief requires a seeded catalogue and explicitly says there is no need
  * for an endpoint that creates products, so this is the only way inventory
@@ -24,7 +25,7 @@ export const PRODUCT_SEED: readonly ProductSeed[] = [
     id: 'prod-espresso-01',
     name: 'Cafetera espresso Artigiano',
     description:
-      'Manual espresso machine with a 1.5 L tank, 15 bar pump and a stainless steel milk frother.',
+      'Cafetera espresso manual con tanque de 1,5 L, bomba de 15 bares y espumador de leche en acero inoxidable.',
     priceInCents: 89_990_00,
     currency: 'COP',
     imageKey: 'product/prod-espresso-01.webp',
@@ -33,7 +34,8 @@ export const PRODUCT_SEED: readonly ProductSeed[] = [
   {
     id: 'prod-grinder-02',
     name: 'Molino cónico Fresa',
-    description: 'Conical burr grinder with 40 grind settings, from espresso to French press.',
+    description:
+      'Molino de fresas cónicas con 40 niveles de molienda, desde espresso hasta prensa francesa.',
     priceInCents: 42_500_00,
     currency: 'COP',
     imageKey: 'product/prod-grinder-02.webp',
@@ -43,7 +45,7 @@ export const PRODUCT_SEED: readonly ProductSeed[] = [
     id: 'prod-kettle-03',
     name: 'Hervidor de cuello de ganso',
     description:
-      'Gooseneck kettle with variable temperature control between 40 and 100 degrees, 1 L.',
+      'Hervidor de cuello de ganso de 1 L con temperatura ajustable entre 40 y 100 grados.',
     priceInCents: 27_900_00,
     currency: 'COP',
     imageKey: 'product/prod-kettle-03.webp',
@@ -52,7 +54,8 @@ export const PRODUCT_SEED: readonly ProductSeed[] = [
   {
     id: 'prod-scale-04',
     name: 'Báscula de precisión 0.1 g',
-    description: 'Brewing scale with a built-in timer, accurate to a tenth of a gram, up to 2 kg.',
+    description:
+      'Báscula para preparar café con temporizador integrado, precisión de 0,1 g y capacidad de hasta 2 kg.',
     priceInCents: 15_400_00,
     currency: 'COP',
     imageKey: 'product/prod-scale-04.webp',
@@ -61,7 +64,8 @@ export const PRODUCT_SEED: readonly ProductSeed[] = [
   {
     id: 'prod-chemex-05',
     name: 'Chemex de vidrio 6 tazas',
-    description: 'Hand-blown borosilicate pour-over brewer with a wooden collar, 6 cup capacity.',
+    description:
+      'Cafetera de filtro en vidrio borosilicato soplado a mano, con collar de madera, para 6 tazas.',
     priceInCents: 33_200_00,
     currency: 'COP',
     imageKey: 'product/prod-chemex-05.webp',
@@ -70,7 +74,7 @@ export const PRODUCT_SEED: readonly ProductSeed[] = [
   {
     id: 'prod-beans-06',
     name: 'Café de origen Huila 500 g',
-    description: 'Washed Caturra from Huila, 1,700 m. Notes of panela, orange and cocoa.',
+    description: 'Caturra lavado del Huila, cultivado a 1.700 m. Notas de panela, naranja y cacao.',
     priceInCents: 4_800_00,
     currency: 'COP',
     imageKey: 'product/prod-beans-06.webp',
