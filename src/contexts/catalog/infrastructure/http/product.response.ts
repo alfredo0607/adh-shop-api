@@ -20,7 +20,7 @@ export class ProductResponse {
   @ApiProperty({ example: 'Cafetera espresso' })
   readonly name!: string;
 
-  @ApiProperty({ example: 'Manual espresso machine with a 1.5 L tank' })
+  @ApiProperty({ example: 'Cafetera espresso manual con tanque de 1,5 L' })
   readonly description!: string;
 
   @ApiProperty({ example: 89_990_00, description: 'Integer minor units, never a decimal' })
