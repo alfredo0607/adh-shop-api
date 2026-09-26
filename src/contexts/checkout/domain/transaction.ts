@@ -3,7 +3,7 @@ import { type Result, err, ok } from '../../../shared/domain';
 import { ReservationExpired, TransactionNotPayable } from './checkout.errors';
 import type { Customer } from './customer';
 import type { DeliveryAddress } from './delivery-address';
-import type { Quote } from './quote';
+import type { Quote, QuoteLine } from './quote';
 
 /**
  * PENDING until the payment gateway reports an outcome; every other status is
@@ -19,15 +19,9 @@ export type TransactionStatus =
 /** Statuses the payment gateway can report. */
 export type GatewayStatus = Exclude<TransactionStatus, 'EXPIRED'>;
 
-export interface PurchasedProduct {
-  readonly id: string;
-  readonly name: string;
-}
-
 interface TransactionState {
   readonly id: string;
   readonly status: TransactionStatus;
-  readonly product: PurchasedProduct;
   readonly quote: Quote;
   readonly customer: Customer;
   readonly deliveryAddress: DeliveryAddress;
@@ -42,7 +36,7 @@ interface TransactionState {
 }
 
 /**
- * One attempt to buy a product.
+ * One attempt to buy an order: one or more products, paid together.
  *
  * Opened before the card is charged, holding reserved stock, so that two
  * buyers cannot both pay for the last unit. The reservation has a deadline: a
@@ -53,7 +47,6 @@ export class Transaction {
 
   static open(input: {
     id: string;
-    product: PurchasedProduct;
     quote: Quote;
     customer: Customer;
     deliveryAddress: DeliveryAddress;
@@ -63,7 +56,6 @@ export class Transaction {
     return new Transaction({
       id: input.id,
       status: 'PENDING',
-      product: input.product,
       quote: input.quote,
       customer: input.customer,
       deliveryAddress: input.deliveryAddress,
@@ -86,8 +78,9 @@ export class Transaction {
     return this.state.status;
   }
 
-  get product(): PurchasedProduct {
-    return this.state.product;
+  /** The products bought, priced as they were when the units were reserved. */
+  get lines(): readonly QuoteLine[] {
+    return this.state.quote.lines;
   }
 
   get quote(): Quote {

@@ -132,12 +132,11 @@ export class InMemoryTransactionRepository implements TransactionRepository, Del
       return ResultAsync.ok(undefined);
     }
 
-    const { id } = settled.product;
-    const { units } = settled.quote;
+    const lines = settled.lines.map(({ productId, units }) => ({ productId, units }));
     const moved =
       settled.status === 'APPROVED'
-        ? this.products.confirmUnits(id, units)
-        : this.products.releaseUnits(id, units);
+        ? this.products.confirmAll(lines)
+        : this.products.releaseAll(lines);
 
     return moved.mapErr((cause) => new CheckoutUnavailable('Stock could not move', cause));
   }

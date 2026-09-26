@@ -1,11 +1,8 @@
-import {
-  ConditionalCheckFailedException,
-  type DynamoDBServiceException,
-} from '@aws-sdk/client-dynamodb';
+import { TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import {
   GetCommand,
   QueryCommand,
-  UpdateCommand,
+  TransactWriteCommand,
   type DynamoDBDocumentClient,
 } from '@aws-sdk/lib-dynamodb';
 
@@ -14,7 +11,6 @@ import {
   CatalogUnavailable,
   InsufficientStock,
   InvalidCursor,
-  InvalidStock,
   ProductNotFound,
   type InvalidProduct,
 } from '../../domain/catalog.errors';
@@ -23,9 +19,10 @@ import { Product } from '../../domain/product';
 import type {
   ProductPage,
   ProductRepository,
+  StockLine,
   StockTransitionError,
 } from '../../domain/product.repository';
-import { Stock } from '../../domain/stock';
+import { Stock, checkStockLines } from '../../domain/stock';
 
 /**
  * Single-table layout for a product.
@@ -46,6 +43,7 @@ interface ProductItem {
   id: string;
   name: string;
   description: string;
+  category: string;
   priceInCents: number;
   currency: string;
   imageKey: string;
@@ -138,122 +136,135 @@ export class DynamoProductRepository implements ProductRepository {
   }
 
   /**
-   * Moves units from available to reserved in one conditional write.
+   * Moves units from available to reserved for every line of an order, in one
+   * DynamoDB transaction: all the products are held, or none is.
    *
-   * This is the operation the whole design exists for. Two buyers reaching for
-   * the last unit both read `available: 1`, and in a read-modify-write both
-   * would pass the check in memory and both would write back a successful
-   * reservation — overselling, silently, with nothing in the logs.
+   * Two buyers reaching for the last unit both read `available: 1`, and in a
+   * read-modify-write both would pass the check in memory and both would write
+   * back a successful reservation. Here each line carries the condition
+   * `available >= :units`, evaluated by DynamoDB while it holds the item, so
+   * exactly one of the two succeeds.
    *
-   * `ConditionExpression: available >= :units` is evaluated by DynamoDB while
-   * it holds the item, so exactly one of the two writes succeeds and the other
-   * is rejected. The condition and the update are the same request; there is no
-   * window between them for anything to interleave.
+   * The products are read first because a transaction returns no attributes,
+   * and the checkout needs each name and price. Each line is also conditioned
+   * on the price read, so the price charged is the price of the units held
+   * even if it changed in between.
    */
-  reserveUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError> {
-    return this.transition(productId, units, {
-      update:
-        'SET #available = #available - :units, #reserved = #reserved + :units, #version = #version + :one',
-      condition: 'attribute_exists(PK) AND #available >= :units',
-      shortfall: 'available',
-    });
-  }
+  reserveAll(lines: readonly StockLine[]): ResultAsync<Product[], StockTransitionError> {
+    const checked = checkStockLines(lines);
+    if (checked.isErr()) {
+      return ResultAsync.err(checked.error);
+    }
 
-  /** Turns a reservation into a sale: the units leave the product. */
-  confirmUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError> {
-    return this.transition(productId, units, {
-      update: 'SET #reserved = #reserved - :units, #version = #version + :one',
-      condition: 'attribute_exists(PK) AND #reserved >= :units',
-      shortfall: 'reserved',
+    return ResultAsync.combine<Product, StockTransitionError>(
+      checked.value.map((line) => this.findById(line.productId)),
+    ).andThen((products) => {
+      const reserved: Product[] = [];
+      for (const [index, product] of products.entries()) {
+        const next = product.reserve(checked.value[index]!.units);
+        if (next.isErr()) {
+          const error = next.error;
+          return ResultAsync.err<StockTransitionError, Product[]>(
+            error instanceof InsufficientStock ? error.forProduct(product.id) : error,
+          );
+        }
+        reserved.push(next.value);
+      }
+
+      return this.transact(
+        checked.value.map((line, index) => ({
+          line,
+          update:
+            'SET #available = #available - :units, #reserved = #reserved + :units, #version = #version + :one',
+          condition: 'attribute_exists(PK) AND #available >= :units AND #price = :price',
+          price: products[index]!.price.amountInCents,
+        })),
+        'available',
+      ).map(() => reserved);
     });
   }
 
   /** Returns held units to the shelf after a declined or abandoned payment. */
-  releaseUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError> {
-    return this.transition(productId, units, {
-      update:
-        'SET #available = #available + :units, #reserved = #reserved - :units, #version = #version + :one',
-      condition: 'attribute_exists(PK) AND #reserved >= :units',
-      shortfall: 'reserved',
-    });
+  releaseAll(lines: readonly StockLine[]): ResultAsync<void, StockTransitionError> {
+    return this.transitionAll(
+      lines,
+      'SET #available = #available + :units, #reserved = #reserved - :units, #version = #version + :one',
+    );
   }
 
-  private transition(
-    productId: string,
-    units: number,
-    expression: { update: string; condition: string; shortfall: 'available' | 'reserved' },
-  ): ResultAsync<Product, StockTransitionError> {
-    if (!Number.isInteger(units) || units <= 0) {
-      return ResultAsync.fromResult<Product, StockTransitionError>(
-        err(new InvalidStock('Unit count must be a positive integer', { units })),
-      );
+  /** Turns a reservation into a sale: the units leave the product. */
+  confirmAll(lines: readonly StockLine[]): ResultAsync<void, StockTransitionError> {
+    return this.transitionAll(
+      lines,
+      'SET #reserved = #reserved - :units, #version = #version + :one',
+    );
+  }
+
+  private transitionAll(
+    lines: readonly StockLine[],
+    update: string,
+  ): ResultAsync<void, StockTransitionError> {
+    const checked = checkStockLines(lines);
+    if (checked.isErr()) {
+      return ResultAsync.err(checked.error);
     }
 
+    return this.transact(
+      checked.value.map((line) => ({
+        line,
+        update,
+        condition: 'attribute_exists(PK) AND #reserved >= :units',
+      })),
+      'reserved',
+    );
+  }
+
+  private transact(
+    operations: readonly {
+      line: StockLine;
+      update: string;
+      condition: string;
+      price?: number;
+    }[],
+    shortfall: 'available' | 'reserved',
+  ): ResultAsync<void, StockTransitionError> {
     return ResultAsync.fromPromise(
       this.client.send(
-        new UpdateCommand({
-          TableName: this.tableName,
-          Key: productKey(productId),
-          UpdateExpression: expression.update,
-          ConditionExpression: expression.condition,
-          // `available`, `reserved`, `name` and `version` are all reserved
-          // words in DynamoDB's expression grammar.
-          ExpressionAttributeNames: {
-            '#available': 'available',
-            '#reserved': 'reserved',
-            '#version': 'version',
-          },
-          ExpressionAttributeValues: { ':units': units, ':one': 1 },
-          ReturnValues: 'ALL_NEW',
-          // Returns the item alongside the exception when the condition fails.
-          // Without it there is no way to tell "no such product" from "not
-          // enough units": DynamoDB reports both as the same failure, and every
-          // sold-out product would answer 404 instead of 409.
-          ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
+        new TransactWriteCommand({
+          TransactItems: operations.map(({ line, update, condition, price }) => ({
+            Update: {
+              TableName: this.tableName,
+              Key: productKey(line.productId),
+              UpdateExpression: update,
+              ConditionExpression: condition,
+              // `available`, `reserved` and `version` are reserved words in
+              // DynamoDB's expression grammar.
+              ExpressionAttributeNames: {
+                '#available': 'available',
+                '#reserved': 'reserved',
+                '#version': 'version',
+                ...(price === undefined ? {} : { '#price': 'priceInCents' }),
+              },
+              ExpressionAttributeValues: {
+                ':units': line.units,
+                ':one': 1,
+                ...(price === undefined ? {} : { ':price': price }),
+              },
+              // Without the item back there is no way to tell "no such product"
+              // from "not enough units": DynamoDB reports both the same way,
+              // and every sold-out product would answer 404 instead of 409.
+              ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
+            },
+          })),
         }),
       ),
-      (cause) => this.explainFailure(cause, productId, units, expression.shortfall),
-    ).andThen((response): Result<Product, StockTransitionError> => {
-      if (response.Attributes === undefined) {
-        return err(new CatalogUnavailable('Update returned no attributes'));
-      }
-
-      return this.toDomain(response.Attributes as ProductItem).mapErr(
-        (cause) => new CatalogUnavailable('Stored product is malformed', cause),
-      );
-    });
-  }
-
-  /**
-   * A failed condition means one of two different things, and the client needs
-   * to be able to tell them apart: the product does not exist, or it exists and
-   * has too few units. DynamoDB reports both the same way, so the item is read
-   * back to decide — only on the failure path, so the happy path stays a single
-   * round trip.
-   */
-  private explainFailure(
-    cause: unknown,
-    productId: string,
-    units: number,
-    shortfall: 'available' | 'reserved',
-  ): StockTransitionError {
-    if (!(cause instanceof ConditionalCheckFailedException)) {
-      return new CatalogUnavailable(
-        `Could not update stock: ${(cause as DynamoDBServiceException).name ?? 'unknown error'}`,
-        cause,
-      );
-    }
-
-    // ReturnValuesOnConditionCheckFailure gives the item back with the
-    // exception, avoiding a second read.
-    const item = cause.Item as Record<string, { N?: string }> | undefined;
-
-    if (item === undefined) {
-      return new ProductNotFound(productId);
-    }
-
-    const held = Number(item[shortfall]?.N ?? 0);
-    return new InsufficientStock(units, held);
+      (cause) =>
+        explainFailure(
+          cause,
+          operations.map(({ line }) => line),
+          shortfall,
+        ),
+    ).map(() => undefined);
   }
 
   private toDomain(item: ProductItem): Result<Product, InvalidProduct | CatalogUnavailable> {
@@ -271,6 +282,7 @@ export class DynamoProductRepository implements ProductRepository {
       id: item.id,
       name: item.name,
       description: item.description,
+      category: item.category,
       price: price.value,
       imageKey: item.imageKey,
       stock: stock.value,
@@ -328,3 +340,54 @@ export class DynamoProductRepository implements ProductRepository {
     return isProductKey ? ok(key as Record<string, string>) : err(new InvalidCursor());
   }
 }
+
+/**
+ * Reads a numeric attribute from an item returned with a cancellation, which
+ * arrives in DynamoDB's wire format (`{ N: "3" }`) even through the document
+ * client.
+ */
+const numberAttribute = (value: unknown): number => {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'object' && value !== null && 'N' in value) {
+    return Number((value as { N: string }).N);
+  }
+  return 0;
+};
+
+/**
+ * Turns a cancelled transaction into the reason the buyer needs. DynamoDB lists
+ * one cancellation reason per operation, in order; the failed ones carry the
+ * item as it was, which tells a missing product from a short one.
+ */
+const explainFailure = (
+  cause: unknown,
+  lines: readonly StockLine[],
+  shortfall: 'available' | 'reserved',
+): StockTransitionError => {
+  if (!(cause instanceof TransactionCanceledException)) {
+    return new CatalogUnavailable('Could not update stock', cause);
+  }
+
+  const reasons = cause.CancellationReasons ?? [];
+  for (const [index, reason] of reasons.entries()) {
+    const line = lines[index];
+    if (line === undefined || reason.Code !== 'ConditionalCheckFailed') continue;
+
+    const item = reason.Item as Record<string, unknown> | undefined;
+    if (item === undefined) {
+      return new ProductNotFound(line.productId);
+    }
+
+    const held = numberAttribute(item[shortfall]);
+    if (held < line.units) {
+      return new InsufficientStock(line.units, held, line.productId);
+    }
+
+    // Enough units, so the price moved between the read and the write.
+    return new CatalogUnavailable('A price changed while the order was being placed', cause);
+  }
+
+  // Another transaction touched one of the items at the same moment. Nothing
+  // was written, so asking again is safe.
+  return new CatalogUnavailable('Stock is busy; try again', cause);
+};

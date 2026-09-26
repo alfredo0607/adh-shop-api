@@ -52,7 +52,6 @@ describe('Transaction', () => {
       const final = Transaction.restore({
         id: approved.id,
         status: 'APPROVED',
-        product: approved.product,
         quote: approved.quote,
         customer: approved.customer,
         deliveryAddress: approved.deliveryAddress,

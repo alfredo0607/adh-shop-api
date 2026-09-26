@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsDefined,
   IsInt,
   IsOptional,
@@ -71,7 +74,7 @@ export class DeliveryAddressBody {
   readonly country!: string;
 }
 
-export class CreateTransactionBody {
+export class OrderItemBody {
   @ApiProperty({ example: 'prod-espresso-01' })
   @IsString()
   @Length(1, 64)
@@ -82,6 +85,21 @@ export class CreateTransactionBody {
   @Min(1)
   @Max(10)
   readonly units!: number;
+}
+
+export class CreateTransactionBody {
+  @ApiProperty({
+    type: [OrderItemBody],
+    minItems: 1,
+    maxItems: 10,
+    description: 'One entry per product; each product may appear once.',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemBody)
+  readonly items!: OrderItemBody[];
 
   @ApiProperty({
     example: 91_690_00,

@@ -15,13 +15,16 @@ describe('CreateTransaction', () => {
     useCase: CreateTransaction;
     customers: InMemoryCustomerRepository;
     transactions: InMemoryTransactionRepository;
-    stockOf: () => Promise<{ available: number; reserved: number }>;
+    stockOf: (id?: string) => Promise<{ available: number; reserved: number }>;
   }
 
   const clock: ClockPort = { now: () => NOW };
 
   const setup = (available = 5): Setup => {
-    const products = new InMemoryProductRepository([aProduct({ id: 'prod-01', available })]);
+    const products = new InMemoryProductRepository([
+      aProduct({ id: 'prod-01', available }),
+      aProduct({ id: 'prod-02', available: 3, priceInCents: 40_000 }),
+    ]);
     const customers = new InMemoryCustomerRepository();
     const transactions = new InMemoryTransactionRepository();
     let sequence = 0;
@@ -35,8 +38,8 @@ describe('CreateTransaction', () => {
       { fees: FEES, reservationTtlMs: TTL_MS },
     );
 
-    const stockOf = async (): Promise<{ available: number; reserved: number }> => {
-      const product = await products.findById('prod-01');
+    const stockOf = async (id = 'prod-01'): Promise<{ available: number; reserved: number }> => {
+      const product = await products.findById(id);
       if (product.isErr()) throw new Error('fixture product vanished');
       return { available: product.value.stock.available, reserved: product.value.stock.reserved };
     };
@@ -53,16 +56,92 @@ describe('CreateTransaction', () => {
     if (result.isErr()) return;
     expect(result.value.status).toBe('PENDING');
     expect(result.value.quote.totalInCents).toBe(TOTAL_FOR_ONE);
-    expect(result.value.product).toEqual({ id: 'prod-01', name: expect.any(String) });
+    expect(result.value.lines).toEqual([
+      {
+        productId: 'prod-01',
+        name: expect.any(String),
+        unitPriceInCents: 150_000,
+        units: 1,
+        lineTotalInCents: 150_000,
+      },
+    ]);
     expect(transactions.byId.get(result.value.id)).toBe(result.value);
   });
 
   it('reserves the units, so nobody else can buy them while the buyer pays', async () => {
     const { useCase, stockOf } = setup(5);
 
-    await useCase.execute(aCommand({ units: 2, expectedTotalInCents: 2 * 150_000 + 1_700_00 }));
+    await useCase.execute(
+      aCommand({
+        items: [{ productId: 'prod-01', units: 2 }],
+        expectedTotalInCents: 2 * 150_000 + 1_700_00,
+      }),
+    );
 
     expect(await stockOf()).toEqual({ available: 3, reserved: 2 });
+  });
+
+  it('opens one transaction for several products, reserving every one of them', async () => {
+    const { useCase, stockOf } = setup(5);
+
+    const result = await useCase.execute(
+      aCommand({
+        items: [
+          { productId: 'prod-01', units: 2 },
+          { productId: 'prod-02', units: 3 },
+        ],
+        expectedTotalInCents: 2 * 150_000 + 3 * 40_000 + 1_700_00,
+      }),
+    );
+
+    if (result.isErr()) throw new Error(`expected a transaction, got ${result.error.code}`);
+    expect(result.value.lines.map((line) => [line.productId, line.units])).toEqual([
+      ['prod-01', 2],
+      ['prod-02', 3],
+    ]);
+    expect(result.value.quote.productInCents).toBe(2 * 150_000 + 3 * 40_000);
+    expect(await stockOf('prod-01')).toEqual({ available: 3, reserved: 2 });
+    expect(await stockOf('prod-02')).toEqual({ available: 0, reserved: 3 });
+  });
+
+  it('reserves nothing when one product of the order is short, and names it', async () => {
+    const { useCase, stockOf } = setup(5);
+
+    const result = await useCase.execute(
+      aCommand({
+        items: [
+          { productId: 'prod-01', units: 2 },
+          { productId: 'prod-02', units: 4 },
+        ],
+      }),
+    );
+
+    expect(result.isErr() && result.error.code).toBe('INSUFFICIENT_STOCK');
+    expect(result.isErr() && result.error.details).toEqual({
+      productId: 'prod-02',
+      requested: 4,
+      available: 3,
+    });
+    expect(await stockOf('prod-01')).toEqual({ available: 5, reserved: 0 });
+    expect(await stockOf('prod-02')).toEqual({ available: 3, reserved: 0 });
+  });
+
+  it('gives back every product when a multi-product order is refused', async () => {
+    const { useCase, stockOf } = setup(5);
+
+    const result = await useCase.execute(
+      aCommand({
+        items: [
+          { productId: 'prod-01', units: 1 },
+          { productId: 'prod-02', units: 1 },
+        ],
+        expectedTotalInCents: 1,
+      }),
+    );
+
+    expect(result.isErr() && result.error.code).toBe('AMOUNT_MISMATCH');
+    expect(await stockOf('prod-01')).toEqual({ available: 5, reserved: 0 });
+    expect(await stockOf('prod-02')).toEqual({ available: 3, reserved: 0 });
   });
 
   it('records the buyer normalised, and reuses the customer when the email returns', async () => {
@@ -126,7 +205,7 @@ describe('CreateTransaction', () => {
   it('answers out of stock without reserving anything', async () => {
     const { useCase, stockOf } = setup(1);
 
-    const result = await useCase.execute(aCommand({ units: 2 }));
+    const result = await useCase.execute(aCommand({ items: [{ productId: 'prod-01', units: 2 }] }));
 
     expect(result.isErr() && result.error.code).toBe('INSUFFICIENT_STOCK');
     expect(await stockOf()).toEqual({ available: 1, reserved: 0 });
@@ -135,7 +214,7 @@ describe('CreateTransaction', () => {
   it('answers not found for a product that does not exist', async () => {
     const { useCase } = setup();
 
-    const result = await useCase.execute(aCommand({ productId: 'nope' }));
+    const result = await useCase.execute(aCommand({ items: [{ productId: 'nope', units: 1 }] }));
 
     expect(result.isErr() && result.error.code).toBe('PRODUCT_NOT_FOUND');
   });
@@ -153,7 +232,17 @@ describe('CreateTransaction', () => {
         },
       },
     ],
-    ['INVALID_TRANSACTION', { units: 0 }],
+    ['INVALID_TRANSACTION', { items: [{ productId: 'prod-01', units: 0 }] }],
+    ['INVALID_TRANSACTION', { items: [] }],
+    [
+      'INVALID_TRANSACTION',
+      {
+        items: [
+          { productId: 'prod-01', units: 1 },
+          { productId: 'prod-01', units: 1 },
+        ],
+      },
+    ],
   ])('rejects %s before reserving anything', async (code, override) => {
     const { useCase, stockOf } = setup(5);
 

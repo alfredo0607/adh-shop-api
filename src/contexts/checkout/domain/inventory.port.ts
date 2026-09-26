@@ -1,6 +1,7 @@
 import type { ResultAsync } from '../../../shared/domain';
 
 import type { CheckoutUnavailable, OutOfStock, UnknownProduct } from './checkout.errors';
+import type { OrderItem } from './quote';
 
 /** What the checkout needs to know about a product to sell it. */
 export interface ProductOffer {
@@ -20,19 +21,22 @@ export interface ProductOffer {
  * contexts to each other's internals.
  */
 export interface InventoryPort {
-  offer(productId: string): ResultAsync<ProductOffer, UnknownProduct | CheckoutUnavailable>;
+  /** The products of an order as they stand now, in the order asked for. */
+  offers(
+    productIds: readonly string[],
+  ): ResultAsync<ProductOffer[], UnknownProduct | CheckoutUnavailable>;
 
   /**
-   * Holds units for a buyer, atomically. The offer returned is the product as
-   * it stood at the moment of the reservation, so the price charged is the
-   * price of the units actually held.
+   * Holds the units of every item, atomically: all of them or none. The offers
+   * returned, in the order of the items, are the products as they stood at the
+   * moment of the reservation, so the price charged is the price of the units
+   * actually held.
    */
   reserve(
-    productId: string,
-    units: number,
-  ): ResultAsync<ProductOffer, UnknownProduct | OutOfStock | CheckoutUnavailable>;
+    items: readonly OrderItem[],
+  ): ResultAsync<ProductOffer[], UnknownProduct | OutOfStock | CheckoutUnavailable>;
 
-  release(productId: string, units: number): ResultAsync<void, CheckoutUnavailable>;
+  release(items: readonly OrderItem[]): ResultAsync<void, CheckoutUnavailable>;
 }
 
 export const INVENTORY_PORT = Symbol('InventoryPort');

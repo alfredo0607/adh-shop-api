@@ -14,8 +14,7 @@ export const TOTAL_FOR_ONE = 150_000 + 500_00 + 1_200_00;
 export const aCommand = (
   overrides: Partial<CreateTransactionCommand> = {},
 ): CreateTransactionCommand => ({
-  productId: 'prod-01',
-  units: 1,
+  items: [{ productId: 'prod-01', units: 1 }],
   expectedTotalInCents: TOTAL_FOR_ONE,
   customer: { fullName: 'Laura Gómez', email: 'Laura@Example.com', phone: '+57 300 123 4567' },
   deliveryAddress: {
@@ -32,9 +31,15 @@ export const aCommand = (
 /** Builds a valid transaction, throwing if the fixture itself is wrong. */
 export const aTransaction = (overrides: { id?: string } = {}): Transaction => {
   const quote = Quote.calculate({
-    unitPriceInCents: 150_000,
-    units: 1,
-    currency: 'COP',
+    items: [
+      {
+        productId: 'prod-01',
+        name: 'Cafetera',
+        unitPriceInCents: 150_000,
+        units: 1,
+        currency: 'COP',
+      },
+    ],
     fees: FEES,
   });
   const address = DeliveryAddress.create(aCommand().deliveryAddress);
@@ -45,7 +50,6 @@ export const aTransaction = (overrides: { id?: string } = {}): Transaction => {
 
   return Transaction.open({
     id: overrides.id ?? '6f1c2b9e-8f4a-4d7e-9a51-1b2c3d4e5f60',
-    product: { id: 'prod-01', name: 'Cafetera' },
     quote: quote.value,
     customer: Customer.restore({
       id: 'customer-1',

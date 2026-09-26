@@ -22,7 +22,7 @@ import {
 import type { Delivery } from '../../domain/delivery';
 import { Customer } from '../../domain/customer';
 import { DeliveryAddress } from '../../domain/delivery-address';
-import { Quote } from '../../domain/quote';
+import { Quote, type QuoteLine } from '../../domain/quote';
 import { Transaction, type TransactionStatus } from '../../domain/transaction';
 import type { TransactionRepository } from '../../domain/transaction.repository';
 
@@ -41,10 +41,23 @@ import type { TransactionRepository } from '../../domain/transaction.repository'
  * table's TTL is configured on `expiresAt`, and DynamoDB would delete the
  * transaction itself once that moment passed.
  *
+ * The order's products are a list attribute, `lines`, on the same item: they
+ * are read and written with the transaction, never on their own. Items written
+ * before orders could hold several products carry a single product in
+ * top-level attributes instead; `toDomain` reads those as a one-line order.
+ *
  * The customer and address are copied into the transaction rather than
  * referenced. An order records who bought and where it goes at the time of
  * purchase; a buyer changing their phone next month must not rewrite it.
  */
+export interface TransactionLineItem {
+  productId: string;
+  productName: string;
+  unitPriceInCents: number;
+  units: number;
+  lineTotalInCents: number;
+}
+
 export interface TransactionItem {
   PK: string;
   SK: string;
@@ -52,10 +65,12 @@ export interface TransactionItem {
   GSI1SK?: string;
   id: string;
   status: TransactionStatus;
-  productId: string;
-  productName: string;
-  unitPriceInCents: number;
-  units: number;
+  lines?: TransactionLineItem[];
+  /** Single-product items, written before `lines` existed. */
+  productId?: string;
+  productName?: string;
+  unitPriceInCents?: number;
+  units?: number;
   productInCents: number;
   baseFeeInCents: number;
   deliveryFeeInCents: number;
@@ -194,8 +209,6 @@ export class DynamoTransactionRepository implements TransactionRepository {
     settled: Transaction,
     delivery: Delivery | undefined,
   ): ResultAsync<Transaction, SettlementConflict | CheckoutUnavailable> {
-    const units = settled.quote.units;
-
     const stock =
       settled.status === 'APPROVED'
         ? // Sold: the units leave the product for good.
@@ -221,10 +234,11 @@ export class DynamoTransactionRepository implements TransactionRepository {
                 },
               },
             },
-            {
+            // One stock movement per product of the order.
+            ...settled.lines.map((line) => ({
               Update: {
                 TableName: this.tableName,
-                Key: productKey(settled.product.id),
+                Key: productKey(line.productId),
                 UpdateExpression: stock,
                 ConditionExpression: '#reserved >= :units',
                 ExpressionAttributeNames: {
@@ -232,9 +246,9 @@ export class DynamoTransactionRepository implements TransactionRepository {
                   '#version': 'version',
                   ...(settled.status === 'APPROVED' ? {} : { '#available': 'available' }),
                 },
-                ExpressionAttributeValues: { ':units': units, ':one': 1 },
+                ExpressionAttributeValues: { ':units': line.units, ':one': 1 },
               },
-            },
+            })),
             ...(delivery === undefined
               ? []
               : [
@@ -326,10 +340,13 @@ export const toItem = (transaction: Transaction): TransactionItem => {
         }),
     id: transaction.id,
     status: transaction.status,
-    productId: transaction.product.id,
-    productName: transaction.product.name,
-    unitPriceInCents: quote.unitPriceInCents,
-    units: quote.units,
+    lines: quote.lines.map((line) => ({
+      productId: line.productId,
+      productName: line.name,
+      unitPriceInCents: line.unitPriceInCents,
+      units: line.units,
+      lineTotalInCents: line.lineTotalInCents,
+    })),
     productInCents: quote.productInCents,
     baseFeeInCents: quote.baseFeeInCents,
     deliveryFeeInCents: quote.deliveryFeeInCents,
@@ -358,15 +375,58 @@ export const toItem = (transaction: Transaction): TransactionItem => {
   };
 };
 
-export const toDomain = (item: TransactionItem): Result<Transaction, CheckoutUnavailable> =>
-  DeliveryAddress.create(item)
+/** The order's lines, from either the current layout or the single-product one. */
+const linesOf = (item: TransactionItem): QuoteLine[] => {
+  if (item.lines !== undefined) {
+    return item.lines.map((line) => ({
+      productId: line.productId,
+      name: line.productName,
+      unitPriceInCents: line.unitPriceInCents,
+      units: line.units,
+      lineTotalInCents: line.lineTotalInCents,
+    }));
+  }
+
+  if (
+    item.productId === undefined ||
+    item.productName === undefined ||
+    item.unitPriceInCents === undefined ||
+    item.units === undefined
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      productId: item.productId,
+      name: item.productName,
+      unitPriceInCents: item.unitPriceInCents,
+      units: item.units,
+      lineTotalInCents: item.unitPriceInCents * item.units,
+    },
+  ];
+};
+
+export const toDomain = (item: TransactionItem): Result<Transaction, CheckoutUnavailable> => {
+  const lines = linesOf(item);
+  if (lines.length === 0) {
+    return err(new CheckoutUnavailable('Stored transaction has no products'));
+  }
+
+  return DeliveryAddress.create(item)
     .mapErr((cause) => new CheckoutUnavailable('Stored transaction is malformed', cause))
     .map((deliveryAddress) =>
       Transaction.restore({
         id: item.id,
         status: item.status,
-        product: { id: item.productId, name: item.productName },
-        quote: Quote.restore(item),
+        quote: Quote.restore({
+          lines,
+          productInCents: item.productInCents,
+          baseFeeInCents: item.baseFeeInCents,
+          deliveryFeeInCents: item.deliveryFeeInCents,
+          totalInCents: item.totalInCents,
+          currency: item.currency,
+        }),
         customer: Customer.restore({
           id: item.customerId,
           fullName: item.customerFullName,
@@ -383,15 +443,18 @@ export const toDomain = (item: TransactionItem): Result<Transaction, CheckoutUna
         version: item.version,
       }),
     );
+};
 
 export interface DeliveryItem {
   PK: string;
   SK: string;
   transactionId: string;
   status: string;
-  productId: string;
-  productName: string;
-  units: number;
+  items?: { productId: string; productName: string; units: number }[];
+  /** Single-product deliveries, written before `items` existed. */
+  productId?: string;
+  productName?: string;
+  units?: number;
   recipientName: string;
   recipientPhone: string;
   addressLine1: string;
@@ -411,9 +474,11 @@ export const toDeliveryItem = (delivery: Delivery): DeliveryItem => {
     ...deliveryKey(delivery.transactionId),
     transactionId: delivery.transactionId,
     status: delivery.status,
-    productId: delivery.productId,
-    productName: delivery.productName,
-    units: delivery.units,
+    items: delivery.items.map((item) => ({
+      productId: item.productId,
+      productName: item.name,
+      units: item.units,
+    })),
     recipientName: delivery.recipientName,
     recipientPhone: delivery.recipientPhone,
     addressLine1: address.addressLine1,

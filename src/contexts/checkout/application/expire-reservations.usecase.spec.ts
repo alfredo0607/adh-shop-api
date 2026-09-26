@@ -233,7 +233,6 @@ describe('ExpireReservations', () => {
       Transaction.restore({
         id: newer.id,
         status: 'PENDING',
-        product: newer.product,
         quote: newer.quote,
         customer: newer.customer,
         deliveryAddress: newer.deliveryAddress,

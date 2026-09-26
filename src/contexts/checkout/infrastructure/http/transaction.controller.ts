@@ -43,26 +43,27 @@ export class TransactionController {
   @Get('quotes')
   @ApiOperation({
     operationId: 'quoteOrder',
-    summary: 'Price an order for the summary screen, without reserving anything',
+    summary: 'Price an order of one or more products, without reserving anything',
   })
   @ApiOkResponse({ type: QuoteResponse })
   @ApiResponse({ status: 404, description: 'PRODUCT_NOT_FOUND' })
   @ApiResponse({ status: 409, description: 'INSUFFICIENT_STOCK' })
-  @ApiResponse({ status: 422, description: 'Invalid product id or units' })
+  @ApiResponse({ status: 422, description: 'Malformed items, or INVALID_TRANSACTION' })
   // Prices and stock move; a cached quote would show a total that is no
   // longer true, and the transaction would then be refused for it.
   @Header('Cache-Control', 'no-store')
   async quote(@Query() query: QuoteQuery): Promise<QuoteResponse> {
-    const quote = await this.quoteCheckout.execute(query);
+    const quote = await this.quoteCheckout.execute({ items: QuoteQuery.parse(query) });
 
-    return QuoteResponse.from(query.productId, toHttpResponse(quote));
+    return QuoteResponse.from(toHttpResponse(quote));
   }
 
   @Post('transactions')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     operationId: 'createTransaction',
-    summary: 'Open a PENDING transaction, reserving the units until it is paid or expires',
+    summary:
+      'Open a PENDING transaction for one or more products, reserving every unit until it is paid or expires',
   })
   @ApiCreatedResponse({
     type: TransactionResponse,

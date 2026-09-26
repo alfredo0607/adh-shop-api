@@ -20,13 +20,13 @@ import { Customer, type CustomerDetails } from '../domain/customer';
 import type { CustomerRepository } from '../domain/customer.repository';
 import { DeliveryAddress, type DeliveryAddressInput } from '../domain/delivery-address';
 import type { InventoryPort, ProductOffer } from '../domain/inventory.port';
-import { type Fees, Quote } from '../domain/quote';
+import { type Fees, type OrderItem, Quote } from '../domain/quote';
 import { Transaction } from '../domain/transaction';
 import type { TransactionRepository } from '../domain/transaction.repository';
 
 export interface CreateTransactionCommand {
-  readonly productId: string;
-  readonly units: number;
+  /** One or more products, each with its units. */
+  readonly items: readonly OrderItem[];
   readonly customer: CustomerDetails;
   readonly deliveryAddress: DeliveryAddressInput;
   /** The total the buyer saw on the summary screen. */
@@ -54,7 +54,8 @@ interface ValidatedInput {
 }
 
 /**
- * Opens a PENDING transaction holding reserved stock.
+ * Opens a PENDING transaction holding reserved stock for every item of the
+ * order, which is reserved atomically: all the products or none.
  *
  * Everything that can be rejected without touching the store is rejected
  * first, so a malformed request never reserves anything. From the moment units
@@ -74,12 +75,12 @@ export class CreateTransaction {
   execute(command: CreateTransactionCommand): ResultAsync<Transaction, CreateTransactionError> {
     return ResultAsync.fromResult(this.validate(command)).andThen((input) =>
       this.inventory
-        .reserve(command.productId, command.units)
+        .reserve(command.items)
         // Compensation is chained onto what follows a successful reservation,
         // not onto the reservation itself: a failed reservation holds nothing,
         // and releasing units it never took would hand out someone else's.
-        .andThen((offer) =>
-          this.place(command, input, offer).orElse((error) =>
+        .andThen((offers) =>
+          this.place(command, input, offers).orElse((error) =>
             this.releaseReservation(command, error),
           ),
         ),
@@ -90,7 +91,7 @@ export class CreateTransaction {
     command: CreateTransactionCommand,
   ): Result<ValidatedInput, CreateTransactionError> {
     const checks = combine<unknown, CreateTransactionError>([
-      Quote.checkUnits(command.units),
+      Quote.checkItems(command.items),
       Customer.details(command.customer),
       DeliveryAddress.create(command.deliveryAddress),
     ]);
@@ -100,7 +101,7 @@ export class CreateTransaction {
     }
 
     const [, customer, deliveryAddress] = checks.value as [
-      number,
+      readonly OrderItem[],
       CustomerDetails,
       DeliveryAddress,
     ];
@@ -111,12 +112,19 @@ export class CreateTransaction {
   private place(
     command: CreateTransactionCommand,
     input: ValidatedInput,
-    offer: ProductOffer,
+    offers: readonly ProductOffer[],
   ): ResultAsync<Transaction, CreateTransactionError> {
     const quote = Quote.calculate({
-      unitPriceInCents: offer.unitPriceInCents,
-      units: command.units,
-      currency: offer.currency,
+      items: command.items.map((item, index) => {
+        const offer = offers[index]!;
+        return {
+          productId: offer.productId,
+          name: offer.name,
+          unitPriceInCents: offer.unitPriceInCents,
+          currency: offer.currency,
+          units: item.units,
+        };
+      }),
       fees: this.policy.fees,
     }).andThen((computed): Result<Quote, CreateTransactionError> =>
       computed.totalInCents === command.expectedTotalInCents
@@ -129,7 +137,6 @@ export class CreateTransaction {
         this.transactions.create(
           Transaction.open({
             id: this.ids.generate(),
-            product: { id: offer.productId, name: offer.name },
             quote: checked,
             customer,
             deliveryAddress: input.deliveryAddress,
@@ -153,7 +160,7 @@ export class CreateTransaction {
     error: CreateTransactionError,
   ): ResultAsync<Transaction, CreateTransactionError> {
     return this.inventory
-      .release(command.productId, command.units)
+      .release(command.items)
       .orElse(() => ok<void, never>(undefined))
       .andThen(() => err<CreateTransactionError, Transaction>(error));
   }

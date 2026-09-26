@@ -115,3 +115,33 @@ export class Stock {
     return ok(units);
   }
 }
+
+/**
+ * Checks a list of stock lines before any of them is applied. One line per
+ * product: DynamoDB refuses two operations on the same item in a transaction,
+ * and two lines for one product would be one line with the units added up.
+ */
+export const checkStockLines = <L extends { readonly productId: string; readonly units: number }>(
+  lines: readonly L[],
+): Result<readonly L[], InvalidStock> => {
+  if (lines.length === 0) {
+    return err(new InvalidStock('At least one stock line is required'));
+  }
+
+  const ids = new Set(lines.map((line) => line.productId));
+  if (ids.size !== lines.length) {
+    return err(new InvalidStock('Each product may appear only once'));
+  }
+
+  const invalid = lines.find((line) => !Number.isInteger(line.units) || line.units <= 0);
+  if (invalid !== undefined) {
+    return err(
+      new InvalidStock('Unit count must be a positive integer', {
+        productId: invalid.productId,
+        units: invalid.units,
+      }),
+    );
+  }
+
+  return ok(lines);
+};

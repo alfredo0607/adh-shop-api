@@ -11,6 +11,7 @@ const buildProduct = (available: number, reserved = 0, version = 0): Product => 
     id: 'prod-1',
     name: 'Cafetera',
     description: 'A coffee maker',
+    category: 'coffee-makers',
     price: price.value,
     imageKey: 'product/cafetera.webp',
     stock: stock.value,
@@ -32,6 +33,7 @@ describe('Product', () => {
         id: '   ',
         name: 'x',
         description: '',
+        category: 'coffee-makers',
         price: price.value,
         imageKey: '',
         stock: stock.value,
@@ -49,12 +51,31 @@ describe('Product', () => {
         id: 'p',
         name: '  ',
         description: '',
+        category: 'coffee-makers',
         price: price.value,
         imageKey: '',
         stock: stock.value,
       });
 
       expect(result.isErr()).toBe(true);
+    });
+
+    it('rejects a category the store does not have', () => {
+      const price = Money.create(1, 'COP');
+      const stock = Stock.create(1);
+      if (price.isErr() || stock.isErr()) throw new Error('fixture is invalid');
+
+      const result = Product.create({
+        id: 'p',
+        name: 'Cafetera',
+        description: '',
+        category: 'furniture',
+        price: price.value,
+        imageKey: '',
+        stock: stock.value,
+      });
+
+      expect(result.isErr() && result.error.code).toBe('INVALID_PRODUCT');
     });
 
     it('starts at version zero when none is supplied', () => {
@@ -134,6 +155,7 @@ describe('Product', () => {
         id: 'prod-1',
         name: 'Cafetera',
         description: 'A coffee maker',
+        category: 'coffee-makers',
         priceInCents: 150_000,
         currency: 'COP',
         imageKey: 'product/cafetera.webp',

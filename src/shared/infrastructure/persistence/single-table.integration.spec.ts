@@ -2,10 +2,15 @@ import { CreateTableCommand, DeleteTableCommand, DynamoDBClient } from '@aws-sdk
 import { GetCommand, PutCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
 import { DynamoProductRepository } from '../../../contexts/catalog/infrastructure/persistence/dynamo-product.repository';
-import { NOW, aTransaction } from '../../../contexts/checkout/__fixtures__/checkout.fixture';
+import { FEES, NOW, aTransaction } from '../../../contexts/checkout/__fixtures__/checkout.fixture';
 import { Delivery } from '../../../contexts/checkout/domain/delivery';
-import type { Transaction } from '../../../contexts/checkout/domain/transaction';
-import { DynamoTransactionRepository } from '../../../contexts/checkout/infrastructure/persistence/dynamo-transaction.repository';
+import { Quote } from '../../../contexts/checkout/domain/quote';
+import { Transaction } from '../../../contexts/checkout/domain/transaction';
+import {
+  DynamoTransactionRepository,
+  toItem,
+} from '../../../contexts/checkout/infrastructure/persistence/dynamo-transaction.repository';
+import { ResultAsync } from '../../domain';
 import type { Environment } from '../config/environment';
 import { DynamoIdempotencyStore } from '../idempotency/dynamo-idempotency.store';
 import { createDynamoDbClient } from './dynamodb.provider';
@@ -89,6 +94,7 @@ describe('Single-table persistence (integration, DynamoDB Local)', () => {
           id,
           name: `Product ${id}`,
           description: 'Integration fixture',
+          category: 'accessories',
           priceInCents: 150_000,
           currency: 'COP',
           imageKey: `product/${id}.webp`,
@@ -111,7 +117,7 @@ describe('Single-table persistence (integration, DynamoDB Local)', () => {
       await putProduct('race', 3);
 
       const attempts = await Promise.all(
-        Array.from({ length: 10 }, () => products.reserveUnits('race', 1)),
+        Array.from({ length: 10 }, () => products.reserveAll([{ productId: 'race', units: 1 }])),
       );
 
       const won = attempts.filter((result) => result.isOk()).length;
@@ -125,8 +131,8 @@ describe('Single-table persistence (integration, DynamoDB Local)', () => {
     it('tells a missing product from a sold-out one', async () => {
       await putProduct('empty', 0);
 
-      const missing = await products.reserveUnits('does-not-exist', 1);
-      const soldOut = await products.reserveUnits('empty', 1);
+      const missing = await products.reserveAll([{ productId: 'does-not-exist', units: 1 }]);
+      const soldOut = await products.reserveAll([{ productId: 'empty', units: 1 }]);
 
       expect(missing.isErr() && missing.error.code).toBe('PRODUCT_NOT_FOUND');
       expect(soldOut.isErr() && soldOut.error.code).toBe('INSUFFICIENT_STOCK');
@@ -135,12 +141,59 @@ describe('Single-table persistence (integration, DynamoDB Local)', () => {
     it('refuses to release or confirm more than is reserved', async () => {
       await putProduct('held', 5, 1);
 
-      const release = await products.releaseUnits('held', 2);
-      const confirm = await products.confirmUnits('held', 2);
+      const release = await products.releaseAll([{ productId: 'held', units: 2 }]);
+      const confirm = await products.confirmAll([{ productId: 'held', units: 2 }]);
 
       expect(release.isErr()).toBe(true);
       expect(confirm.isErr()).toBe(true);
       expect(await stockOf('held')).toEqual({ available: 5, reserved: 1 });
+    });
+
+    it('reserves every product of an order, or none of them', async () => {
+      await putProduct('order-a', 5);
+      await putProduct('order-b', 1);
+
+      const refused = await products.reserveAll([
+        { productId: 'order-a', units: 2 },
+        { productId: 'order-b', units: 2 },
+      ]);
+      const accepted = await products.reserveAll([
+        { productId: 'order-a', units: 2 },
+        { productId: 'order-b', units: 1 },
+      ]);
+
+      expect(refused.isErr() && refused.error.details).toEqual({
+        productId: 'order-b',
+        requested: 2,
+        available: 1,
+      });
+      expect(accepted.isOk()).toBe(true);
+      expect(await stockOf('order-a')).toEqual({ available: 3, reserved: 2 });
+      expect(await stockOf('order-b')).toEqual({ available: 0, reserved: 1 });
+    });
+
+    it('rolls a whole order back when one product loses a race inside the write', async () => {
+      await putProduct('late-a', 5);
+      await putProduct('late-b', 1);
+      // Another buyer takes the last unit of late-b after this order read it,
+      // so only DynamoDB's condition can catch the shortfall.
+      const read = await products.findById('late-b');
+      await products.reserveAll([{ productId: 'late-b', units: 1 }]);
+      const findById = products.findById.bind(products);
+      jest
+        .spyOn(products, 'findById')
+        .mockImplementation((id) =>
+          id === 'late-b' && read.isOk() ? ResultAsync.ok(read.value) : findById(id),
+        );
+
+      const result = await products.reserveAll([
+        { productId: 'late-a', units: 2 },
+        { productId: 'late-b', units: 1 },
+      ]);
+      jest.restoreAllMocks();
+
+      expect(result.isErr() && result.error.code).toBe('INSUFFICIENT_STOCK');
+      expect(await stockOf('late-a')).toEqual({ available: 5, reserved: 0 });
     });
 
     it('pages the listing with a cursor the next query accepts', async () => {
@@ -243,6 +296,72 @@ describe('Single-table persistence (integration, DynamoDB Local)', () => {
       expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
       const stored = await transactions.findById(open.id);
       expect(stored.isOk() && stored.value.status).toBe('PENDING');
+    });
+
+    it('settles every product of a multi-product order in the same write', async () => {
+      await putProduct('multi-a', 4, 2);
+      await putProduct('multi-b', 1, 1);
+      const quote = Quote.calculate({
+        items: [
+          { productId: 'multi-a', name: 'A', unitPriceInCents: 150_000, units: 2, currency: 'COP' },
+          { productId: 'multi-b', name: 'B', unitPriceInCents: 150_000, units: 1, currency: 'COP' },
+        ],
+        fees: FEES,
+      });
+      if (quote.isErr()) throw new Error('fixture is invalid');
+      const base = aTransaction();
+      const open = Transaction.open({
+        id: '77777777-7777-4777-8777-777777777777',
+        quote: quote.value,
+        customer: base.customer,
+        deliveryAddress: base.deliveryAddress,
+        now: NOW,
+        reservationTtlMs: 60_000,
+      });
+      await transactions.create(open);
+      const approved = open.settle('APPROVED', later(2_000));
+      if (approved === undefined) throw new Error('should settle');
+
+      await transactions.saveSettlement(approved, Delivery.forApproved(approved, later(2_000)));
+
+      const stored = await transactions.findById(open.id);
+      expect(stored.isOk() && stored.value.lines.map((line) => line.productId)).toEqual([
+        'multi-a',
+        'multi-b',
+      ]);
+      expect(await stockOf('multi-a')).toEqual({ available: 4, reserved: 0 });
+      expect(await stockOf('multi-b')).toEqual({ available: 1, reserved: 0 });
+    });
+
+    it('still reads a transaction stored before orders could hold several products', async () => {
+      const id = '88888888-8888-4888-8888-888888888888';
+      const current = toItem(aTransaction({ id }));
+      const rest: Record<string, unknown> = { ...current };
+      delete rest['lines'];
+      await client.send(
+        new PutCommand({
+          TableName: TABLE,
+          Item: {
+            ...rest,
+            productId: 'prod-01',
+            productName: 'Cafetera',
+            unitPriceInCents: 150_000,
+            units: 1,
+          },
+        }),
+      );
+
+      const stored = await transactions.findById(id);
+
+      expect(stored.isOk() && stored.value.lines).toEqual([
+        {
+          productId: 'prod-01',
+          name: 'Cafetera',
+          unitPriceInCents: 150_000,
+          units: 1,
+          lineTotalInCents: 150_000,
+        },
+      ]);
     });
 
     it('lists an overdue reservation from the sparse index, and drops it once settled', async () => {

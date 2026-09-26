@@ -10,24 +10,27 @@ import { NOW } from '../__fixtures__/checkout.fixture';
 import { QuoteCheckout } from './quote-checkout.usecase';
 
 describe('QuoteCheckout', () => {
-  const products = new InMemoryProductRepository([aProduct({ id: 'prod-01', available: 2 })]);
+  const products = new InMemoryProductRepository([
+    aProduct({ id: 'prod-01', available: 2 }),
+    aProduct({ id: 'prod-02', available: 1, priceInCents: 40_000 }),
+  ]);
   const useCase = new QuoteCheckout(new CatalogInventoryAdapter(products), FEES);
 
   it('prices the order the same way the transaction will', async () => {
-    const result = await useCase.execute({ productId: 'prod-01', units: 1 });
+    const result = await useCase.execute({ items: [{ productId: 'prod-01', units: 1 }] });
 
     expect(result.isOk() && result.value.totalInCents).toBe(TOTAL_FOR_ONE);
   });
 
   it('reserves nothing, since the buyer is only looking', async () => {
-    await useCase.execute({ productId: 'prod-01', units: 2 });
+    await useCase.execute({ items: [{ productId: 'prod-01', units: 2 }] });
 
     const product = await products.findById('prod-01');
     expect(product.isOk() && product.value.stock.reserved).toBe(0);
   });
 
   it('warns up front when there are not enough units', async () => {
-    const result = await useCase.execute({ productId: 'prod-01', units: 3 });
+    const result = await useCase.execute({ items: [{ productId: 'prod-01', units: 3 }] });
 
     expect(result.isErr() && result.error.code).toBe('INSUFFICIENT_STOCK');
     expect(result.isErr() && result.error.details).toEqual({
@@ -38,13 +41,43 @@ describe('QuoteCheckout', () => {
   });
 
   it('rejects an invalid quantity without asking the inventory', async () => {
-    const result = await useCase.execute({ productId: 'prod-01', units: 11 });
+    const result = await useCase.execute({ items: [{ productId: 'prod-01', units: 11 }] });
 
     expect(result.isErr() && result.error.code).toBe('INVALID_TRANSACTION');
   });
 
+  it('prices several products together, with the fees charged once', async () => {
+    const result = await useCase.execute({
+      items: [
+        { productId: 'prod-01', units: 2 },
+        { productId: 'prod-02', units: 1 },
+      ],
+    });
+
+    if (result.isErr()) throw new Error(`expected a quote, got ${result.error.code}`);
+    expect(result.value.lines.map((line) => line.productId)).toEqual(['prod-01', 'prod-02']);
+    expect(result.value.totalInCents).toBe(
+      2 * 150_000 + 40_000 + FEES.baseFeeInCents + FEES.deliveryFeeInCents,
+    );
+  });
+
+  it('names the first product that is short', async () => {
+    const result = await useCase.execute({
+      items: [
+        { productId: 'prod-01', units: 1 },
+        { productId: 'prod-02', units: 2 },
+      ],
+    });
+
+    expect(result.isErr() && result.error.details).toEqual({
+      productId: 'prod-02',
+      requested: 2,
+      available: 1,
+    });
+  });
+
   it('answers not found for an unknown product', async () => {
-    const result = await useCase.execute({ productId: 'nope', units: 1 });
+    const result = await useCase.execute({ items: [{ productId: 'nope', units: 1 }] });
 
     expect(result.isErr() && result.error.code).toBe('PRODUCT_NOT_FOUND');
   });

@@ -22,6 +22,17 @@ class DeliveryAddressView {
   readonly country!: string;
 }
 
+class DeliveryItemView {
+  @ApiProperty({ example: 'prod-espresso-01' })
+  readonly productId!: string;
+
+  @ApiProperty({ example: 'Cafetera espresso Artigiano' })
+  readonly name!: string;
+
+  @ApiProperty({ example: 1 })
+  readonly units!: number;
+}
+
 export class DeliveryResponse {
   @ApiProperty({ example: '6f1c2b9e-8f4a-4d7e-9a51-1b2c3d4e5f60' })
   readonly transactionId!: string;
@@ -29,14 +40,8 @@ export class DeliveryResponse {
   @ApiProperty({ enum: ['PREPARING', 'SHIPPED', 'DELIVERED'], example: 'PREPARING' })
   readonly status!: DeliveryStatus;
 
-  @ApiProperty({ example: 'prod-espresso-01' })
-  readonly productId!: string;
-
-  @ApiProperty({ example: 'Cafetera espresso Artigiano' })
-  readonly productName!: string;
-
-  @ApiProperty({ example: 1 })
-  readonly units!: number;
+  @ApiProperty({ type: [DeliveryItemView], description: 'Every product in the parcel' })
+  readonly items!: DeliveryItemView[];
 
   @ApiProperty({ example: 'Laura Gómez' })
   readonly recipientName!: string;
@@ -59,9 +64,7 @@ export class DeliveryResponse {
     return {
       transactionId: delivery.transactionId,
       status: delivery.status,
-      productId: delivery.productId,
-      productName: delivery.productName,
-      units: delivery.units,
+      items: delivery.items.map(({ productId, name, units }) => ({ productId, name, units })),
       recipientName: delivery.recipientName,
       recipientPhone: delivery.maskedRecipientPhone,
       address: {

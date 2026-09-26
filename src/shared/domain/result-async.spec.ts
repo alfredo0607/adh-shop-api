@@ -40,6 +40,32 @@ describe('ResultAsync', () => {
     });
   });
 
+  describe('combine', () => {
+    it('collects every value, in the order given', async () => {
+      const result = await ResultAsync.combine([ResultAsync.ok(1), ResultAsync.ok(2)]);
+
+      expect(result).toEqual(ok([1, 2]));
+    });
+
+    it('reports the first failure in list order, whichever finishes first', async () => {
+      const slowFailure = new ResultAsync<number, string>(
+        new Promise((resolve) => setTimeout(() => resolve(err('first')), 10)),
+      );
+
+      const result = await ResultAsync.combine([
+        ResultAsync.ok<number, string>(1),
+        slowFailure,
+        ResultAsync.err<string, number>('second'),
+      ]);
+
+      expect(result).toEqual(err('first'));
+    });
+
+    it('succeeds with nothing to combine', async () => {
+      expect(await ResultAsync.combine([])).toEqual(ok([]));
+    });
+  });
+
   describe('map', () => {
     it('transforms the value on the happy path', async () => {
       const result = await ResultAsync.ok<number, string>(3).map((n) => n * 2);

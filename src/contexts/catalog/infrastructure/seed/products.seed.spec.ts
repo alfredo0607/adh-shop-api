@@ -1,6 +1,7 @@
 import { Money } from '../../domain/money';
 import { Product } from '../../domain/product';
 import { Stock } from '../../domain/stock';
+import { PRODUCT_CATEGORIES } from '../../domain/category';
 import { PRODUCT_SEED } from './products.seed';
 
 /**
@@ -35,6 +36,7 @@ describe('PRODUCT_SEED', () => {
         id: seed.id,
         name: seed.name,
         description: seed.description,
+        category: seed.category,
         price: price.value,
         imageKey: seed.imageKey,
         stock: stock.value,
@@ -57,5 +59,15 @@ describe('PRODUCT_SEED', () => {
 
   it('includes purchasable products', () => {
     expect(PRODUCT_SEED.filter((product) => product.available > 0).length).toBeGreaterThan(1);
+  });
+
+  it('stocks every category, so no filter in the storefront comes up empty', () => {
+    const stocked = new Set(PRODUCT_SEED.map((product) => product.category));
+
+    expect([...stocked].sort()).toEqual([...PRODUCT_CATEGORIES].sort());
+  });
+
+  it('has more than one page of products for the storefront to paginate', () => {
+    expect(PRODUCT_SEED.length).toBeGreaterThan(12);
   });
 });

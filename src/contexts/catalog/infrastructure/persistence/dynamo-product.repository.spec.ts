@@ -1,4 +1,4 @@
-import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { type CancellationReason, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
 import { DynamoProductRepository } from './dynamo-product.repository';
@@ -41,6 +41,7 @@ const storedProduct = {
   id: 'p1',
   name: 'Cafetera',
   description: 'A coffee maker',
+  category: 'coffee-makers',
   priceInCents: 150_000,
   currency: 'COP',
   imageKey: 'product/x.webp',
@@ -49,89 +50,277 @@ const storedProduct = {
   version: 4,
 };
 
+const anotherProduct = {
+  ...storedProduct,
+  PK: 'PRODUCT#p2',
+  GSI1SK: 'p2',
+  id: 'p2',
+  name: 'Molino',
+  priceInCents: 40_000,
+  available: 4,
+  reserved: 0,
+};
+
+interface TransactItem {
+  Update: {
+    UpdateExpression: string;
+    ConditionExpression: string;
+    ExpressionAttributeNames: Record<string, string>;
+    ExpressionAttributeValues: Record<string, number>;
+    ReturnValuesOnConditionCheckFailure: string;
+  };
+}
+
 describe('DynamoProductRepository', () => {
-  describe('reserveUnits', () => {
-    it('makes the condition the store evaluates, not this process', async () => {
-      const { client, sent } = buildClient(() => ({ Attributes: storedProduct }));
+  describe('reserveAll', () => {
+    /** Answers each read with the stored product, and each transaction with success. */
+    const storeWith = (
+      products: Record<string, Record<string, unknown>>,
+    ): ReturnType<typeof buildClient> =>
+      buildClient((command) => {
+        if ('TransactItems' in command.input) return {};
+        const key = command.input['Key'] as { PK: string };
+        return { Item: products[key.PK.replace('PRODUCT#', '')] };
+      });
 
-      await new DynamoProductRepository(client, 'adh-shop').reserveUnits('p1', 3);
+    const transactionOf = (sent: Sent[]): TransactItem[] =>
+      (sent.find((command) => 'TransactItems' in command.input)?.input['TransactItems'] ??
+        []) as TransactItem[];
 
-      const input = sent[0]?.input as {
-        ConditionExpression: string;
-        UpdateExpression: string;
-        ExpressionAttributeValues: Record<string, number>;
-      };
+    it('holds every line in one transaction, with the condition evaluated by the store', async () => {
+      const { client, sent } = storeWith({ p1: storedProduct, p2: anotherProduct });
 
-      // Without `#available >= :units` evaluated server-side, two concurrent
-      // reservations for the last unit both succeed.
-      expect(input.ConditionExpression).toContain('#available >= :units');
-      expect(input.ConditionExpression).toContain('attribute_exists(PK)');
-      expect(input.UpdateExpression).toContain('#available = #available - :units');
-      expect(input.UpdateExpression).toContain('#reserved = #reserved + :units');
-      expect(input.ExpressionAttributeValues[':units']).toBe(3);
-    });
-
-    it('bumps the version on every write, so a lost update is detectable', async () => {
-      const { client, sent } = buildClient(() => ({ Attributes: storedProduct }));
-
-      await new DynamoProductRepository(client, 'adh-shop').reserveUnits('p1', 1);
-
-      expect((sent[0]?.input as { UpdateExpression: string }).UpdateExpression).toContain(
-        '#version = #version + :one',
-      );
-    });
-
-    it('aliases the reserved words DynamoDB would otherwise reject', async () => {
-      const { client, sent } = buildClient(() => ({ Attributes: storedProduct }));
-
-      await new DynamoProductRepository(client, 'adh-shop').reserveUnits('p1', 1);
-
-      expect(
-        (sent[0]?.input as { ExpressionAttributeNames: Record<string, string> })
-          .ExpressionAttributeNames,
-      ).toEqual({ '#available': 'available', '#reserved': 'reserved', '#version': 'version' });
-    });
-
-    it('asks for the item back when the condition fails', async () => {
-      const { client, sent } = buildClient(() => ({ Attributes: storedProduct }));
-
-      await new DynamoProductRepository(client, 'adh-shop').reserveUnits('p1', 1);
-
-      // Without this, a sold-out product cannot be told apart from a missing
-      // one and every conflict would answer 404 instead of 409.
-      expect(
-        (sent[0]?.input as { ReturnValuesOnConditionCheckFailure: string })
-          .ReturnValuesOnConditionCheckFailure,
-      ).toBe('ALL_OLD');
-    });
-
-    it('returns the updated product', async () => {
-      const { client } = buildClient(() => ({
-        Attributes: { ...storedProduct, available: 7, reserved: 5, version: 5 },
-      }));
-
-      const result = await new DynamoProductRepository(client, 'adh-shop').reserveUnits('p1', 3);
+      const result = await new DynamoProductRepository(client, 'adh-shop').reserveAll([
+        { productId: 'p1', units: 3 },
+        { productId: 'p2', units: 1 },
+      ]);
 
       expect(result.isOk()).toBe(true);
-      if (result.isOk()) {
-        expect(result.value.stock.available).toBe(7);
-        expect(result.value.version).toBe(5);
+      const operations = transactionOf(sent);
+      expect(operations).toHaveLength(2);
+      for (const [index, { Update }] of operations.entries()) {
+        // Without `#available >= :units` evaluated server-side, two concurrent
+        // reservations for the last unit both succeed.
+        expect(Update.ConditionExpression).toContain('attribute_exists(PK)');
+        expect(Update.ConditionExpression).toContain('#available >= :units');
+        expect(Update.UpdateExpression).toContain('#available = #available - :units');
+        expect(Update.UpdateExpression).toContain('#reserved = #reserved + :units');
+        expect(Update.UpdateExpression).toContain('#version = #version + :one');
+        expect(Update.ExpressionAttributeValues[':units']).toBe([3, 1][index]);
       }
     });
 
-    it.each([0, -1, 1.5])('rejects a unit count of %s without calling the store', async (units) => {
-      const { client, sent } = buildClient(() => ({ Attributes: storedProduct }));
+    it('charges the price it read: a price changed in between fails the write', async () => {
+      const { client, sent } = storeWith({ p1: storedProduct });
 
-      const result = await new DynamoProductRepository(client, 'adh-shop').reserveUnits(
-        'p1',
-        units,
-      );
+      await new DynamoProductRepository(client, 'adh-shop').reserveAll([
+        { productId: 'p1', units: 1 },
+      ]);
+
+      const [{ Update }] = transactionOf(sent) as [TransactItem];
+      expect(Update.ConditionExpression).toContain('#price = :price');
+      expect(Update.ExpressionAttributeNames['#price']).toBe('priceInCents');
+      expect(Update.ExpressionAttributeValues[':price']).toBe(150_000);
+    });
+
+    it('asks for each item back, so a missing product can be told from a short one', async () => {
+      const { client, sent } = storeWith({ p1: storedProduct });
+
+      await new DynamoProductRepository(client, 'adh-shop').reserveAll([
+        { productId: 'p1', units: 1 },
+      ]);
+
+      const [{ Update }] = transactionOf(sent) as [TransactItem];
+      expect(Update.ReturnValuesOnConditionCheckFailure).toBe('ALL_OLD');
+      expect(Update.ExpressionAttributeNames).toMatchObject({
+        '#available': 'available',
+        '#reserved': 'reserved',
+        '#version': 'version',
+      });
+    });
+
+    it('returns the products as reserved, in the order of the lines', async () => {
+      const { client } = storeWith({ p1: storedProduct, p2: anotherProduct });
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').reserveAll([
+        { productId: 'p2', units: 1 },
+        { productId: 'p1', units: 3 },
+      ]);
+
+      if (result.isErr()) throw new Error(`expected products, got ${result.error.code}`);
+      expect(result.value.map((product) => product.id)).toEqual(['p2', 'p1']);
+      expect(result.value[1]?.stock.available).toBe(7);
+      expect(result.value[1]?.stock.reserved).toBe(5);
+    });
+
+    it('refuses a short line before writing anything, naming the product', async () => {
+      const { client, sent } = storeWith({ p1: storedProduct, p2: anotherProduct });
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').reserveAll([
+        { productId: 'p1', units: 1 },
+        { productId: 'p2', units: 9 },
+      ]);
+
+      expect(result.isErr() && result.error.details).toEqual({
+        productId: 'p2',
+        requested: 9,
+        available: 4,
+      });
+      expect(transactionOf(sent)).toHaveLength(0);
+    });
+
+    it.each([
+      ['no lines', []],
+      [
+        'the same product twice',
+        [
+          { productId: 'p1', units: 1 },
+          { productId: 'p1', units: 2 },
+        ],
+      ],
+      ['zero units', [{ productId: 'p1', units: 0 }]],
+      ['a fractional unit count', [{ productId: 'p1', units: 1.5 }]],
+    ])('rejects %s without calling the store', async (_case, lines) => {
+      const { client, sent } = storeWith({ p1: storedProduct });
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').reserveAll(lines);
 
       // A malformed request, not a shortage: 422, never 409.
       expect(result.isErr() && result.error.code).toBe('INVALID_STOCK');
       expect(sent).toHaveLength(0);
     });
+  });
 
+  describe('when the transaction is cancelled', () => {
+    const cancelled = (reasons: CancellationReason[]): TransactionCanceledException =>
+      new TransactionCanceledException({
+        message: 'Transaction cancelled',
+        $metadata: {},
+        CancellationReasons: reasons,
+      });
+
+    const failingWith = (error: unknown): ReturnType<typeof buildClient> =>
+      buildClient((command) =>
+        'TransactItems' in command.input ? error : { Item: storedProduct },
+      );
+
+    it('reports insufficient stock for the line that lost the race', async () => {
+      const { client } = failingWith(
+        cancelled([{ Code: 'ConditionalCheckFailed', Item: { available: { N: '2' } } }]),
+      );
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').reserveAll([
+        { productId: 'p1', units: 5 },
+      ]);
+
+      expect(result.isErr() && result.error.code).toBe('INSUFFICIENT_STOCK');
+      expect(result.isErr() && result.error.details).toEqual({
+        productId: 'p1',
+        requested: 5,
+        available: 2,
+      });
+    });
+
+    it('reports not found when a failed line has no item', async () => {
+      const { client } = buildClient(() =>
+        cancelled([{ Code: 'None' }, { Code: 'ConditionalCheckFailed' }]),
+      );
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').releaseAll([
+        { productId: 'p1', units: 1 },
+        { productId: 'gone', units: 1 },
+      ]);
+
+      expect(result.isErr() && result.error.details).toEqual({ productId: 'gone' });
+    });
+
+    it('reports a price that moved as a store problem, safe to retry', async () => {
+      const { client } = failingWith(
+        cancelled([{ Code: 'ConditionalCheckFailed', Item: { available: { N: '9' } } }]),
+      );
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').reserveAll([
+        { productId: 'p1', units: 1 },
+      ]);
+
+      expect(result.isErr() && result.error.code).toBe('CATALOG_UNAVAILABLE');
+    });
+
+    it('reports a conflicting transaction as a store problem, safe to retry', async () => {
+      const { client } = buildClient(() => cancelled([{ Code: 'TransactionConflict' }]));
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').confirmAll([
+        { productId: 'p1', units: 1 },
+      ]);
+
+      expect(result.isErr() && result.error.code).toBe('CATALOG_UNAVAILABLE');
+    });
+
+    it('reads the held count for confirm and release, not the available one', async () => {
+      const { client } = buildClient(() =>
+        cancelled([
+          { Code: 'ConditionalCheckFailed', Item: { available: { N: '9' }, reserved: { N: '1' } } },
+        ]),
+      );
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').confirmAll([
+        { productId: 'p1', units: 4 },
+      ]);
+
+      expect(result.isErr() && result.error.details).toEqual({
+        productId: 'p1',
+        requested: 4,
+        available: 1,
+      });
+    });
+
+    it('reports any other failure as the store being unavailable', async () => {
+      const { client } = buildClient(() => new Error('ECONNRESET'));
+
+      const result = await new DynamoProductRepository(client, 'adh-shop').releaseAll([
+        { productId: 'p1', units: 1 },
+      ]);
+
+      expect(result.isErr() && result.error.kind).toBe('UNAVAILABLE');
+    });
+  });
+
+  describe('confirmAll and releaseAll', () => {
+    const operationsFor = async (method: 'confirmAll' | 'releaseAll'): Promise<TransactItem[]> => {
+      const { client, sent } = buildClient(() => ({}));
+
+      await new DynamoProductRepository(client, 'adh-shop')[method]([
+        { productId: 'p1', units: 2 },
+        { productId: 'p2', units: 1 },
+      ]);
+
+      // No read first: nothing is returned, so nothing needs reading.
+      expect(sent).toHaveLength(1);
+      return (sent[0]?.input['TransactItems'] ?? []) as TransactItem[];
+    };
+
+    it('confirm removes the units of every line from its product entirely', async () => {
+      const operations = await operationsFor('confirmAll');
+
+      expect(operations).toHaveLength(2);
+      for (const { Update } of operations) {
+        expect(Update.UpdateExpression).toContain('#reserved = #reserved - :units');
+        expect(Update.UpdateExpression).not.toContain('#available');
+        expect(Update.ConditionExpression).toContain('#reserved >= :units');
+      }
+    });
+
+    it('release returns the units of every line to the shelf', async () => {
+      const operations = await operationsFor('releaseAll');
+
+      for (const { Update } of operations) {
+        expect(Update.UpdateExpression).toContain('#available = #available + :units');
+        expect(Update.UpdateExpression).toContain('#reserved = #reserved - :units');
+      }
+    });
+  });
+
+  describe('cursors', () => {
     const encode = (value: unknown): string =>
       Buffer.from(JSON.stringify(value)).toString('base64url');
 
@@ -165,74 +354,6 @@ describe('DynamoProductRepository', () => {
 
       expect(result.isErr() && result.error.kind).toBe('VALIDATION');
       expect(sent).toHaveLength(0);
-    });
-  });
-
-  describe('when the condition fails', () => {
-    const conditionFailure = (item?: Record<string, unknown>): ConditionalCheckFailedException => {
-      const error = new ConditionalCheckFailedException({
-        message: 'The conditional request failed',
-        $metadata: {},
-      });
-      if (item !== undefined) {
-        (error as { Item?: unknown }).Item = item;
-      }
-      return error;
-    };
-
-    it('reports insufficient stock when the product exists', async () => {
-      const { client } = buildClient(() => conditionFailure({ available: { N: '2' } }));
-
-      const result = await new DynamoProductRepository(client, 'adh-shop').reserveUnits('p1', 5);
-
-      expect(result.isErr()).toBe(true);
-      if (result.isErr()) {
-        expect(result.error.code).toBe('INSUFFICIENT_STOCK');
-        expect(result.error.details).toEqual({ requested: 5, available: 2 });
-      }
-    });
-
-    it('reports not found when no item comes back', async () => {
-      const { client } = buildClient(() => conditionFailure());
-
-      const result = await new DynamoProductRepository(client, 'adh-shop').reserveUnits('p1', 1);
-
-      if (result.isErr()) {
-        expect(result.error.code).toBe('PRODUCT_NOT_FOUND');
-      }
-    });
-
-    it('reads the held count for confirm and release, not the available one', async () => {
-      const { client } = buildClient(() => conditionFailure({ reserved: { N: '1' } }));
-
-      const result = await new DynamoProductRepository(client, 'adh-shop').confirmUnits('p1', 4);
-
-      if (result.isErr()) {
-        expect(result.error.details).toEqual({ requested: 4, available: 1 });
-      }
-    });
-  });
-
-  describe('confirmUnits and releaseUnits', () => {
-    it('confirm removes the units from the product entirely', async () => {
-      const { client, sent } = buildClient(() => ({ Attributes: storedProduct }));
-
-      await new DynamoProductRepository(client, 'adh-shop').confirmUnits('p1', 2);
-      const input = sent[0]?.input as { UpdateExpression: string; ConditionExpression: string };
-
-      expect(input.UpdateExpression).toContain('#reserved = #reserved - :units');
-      expect(input.UpdateExpression).not.toContain('#available');
-      expect(input.ConditionExpression).toContain('#reserved >= :units');
-    });
-
-    it('release returns the units to the shelf', async () => {
-      const { client, sent } = buildClient(() => ({ Attributes: storedProduct }));
-
-      await new DynamoProductRepository(client, 'adh-shop').releaseUnits('p1', 2);
-      const input = sent[0]?.input as { UpdateExpression: string };
-
-      expect(input.UpdateExpression).toContain('#available = #available + :units');
-      expect(input.UpdateExpression).toContain('#reserved = #reserved - :units');
     });
   });
 
