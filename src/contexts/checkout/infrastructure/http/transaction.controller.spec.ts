@@ -30,7 +30,10 @@ describe('TransactionController', () => {
 
   beforeAll(async () => {
     const inventory = new CatalogInventoryAdapter(
-      new InMemoryProductRepository([aProduct({ id: 'prod-01', available: 3 })]),
+      new InMemoryProductRepository([
+        aProduct({ id: 'prod-01', available: 3 }),
+        aProduct({ id: 'prod-02', available: 3 }),
+      ]),
     );
     const transactions = new InMemoryTransactionRepository();
 
@@ -85,26 +88,67 @@ describe('TransactionController', () => {
     it('prices the order and forbids caching it', async () => {
       const response = await request(server())
         .get('/quotes')
-        .query({ productId: 'prod-01', units: 1 })
+        .query({ items: 'prod-01:1' })
         .expect(200);
 
-      expect(body<{ amounts: { totalInCents: number } }>(response).amounts.totalInCents).toBe(
-        TOTAL_FOR_ONE,
-      );
+      const quote = body<{
+        items: { productId: string; units: number; lineTotalInCents: number }[];
+        amounts: { totalInCents: number };
+      }>(response);
+      expect(quote.amounts.totalInCents).toBe(TOTAL_FOR_ONE);
+      expect(quote.items).toEqual([
+        {
+          productId: 'prod-01',
+          name: expect.any(String),
+          units: 1,
+          unitPriceInCents: 150_000,
+          lineTotalInCents: 150_000,
+        },
+      ]);
       expect(response.headers['cache-control']).toBe('no-store');
+    });
+
+    it('prices several products in one quote', async () => {
+      const response = await request(server())
+        .get('/quotes')
+        .query({ items: 'prod-01:2,prod-02:1' })
+        .expect(200);
+
+      const quote = body<{ items: { productId: string }[] }>(response);
+      expect(quote.items.map((item) => item.productId)).toEqual(['prod-01', 'prod-02']);
+    });
+
+    it.each([
+      ['no items', ''],
+      ['a pair without units', 'prod-01'],
+      ['a non-numeric count', 'prod-01:x'],
+      ['a stray separator', 'prod-01:1,'],
+      ['characters outside an id', 'prod 01:1'],
+      ['more than ten products', Array.from({ length: 11 }, (_, i) => `p${i}:1`).join(',')],
+    ])('answers 422 for %s', async (_case, items) => {
+      await request(server()).get('/quotes').query({ items }).expect(422);
+    });
+
+    it('answers 422 for the same product twice', async () => {
+      const response = await request(server())
+        .get('/quotes')
+        .query({ items: 'prod-01:1,prod-01:2' })
+        .expect(422);
+
+      expect(body<{ error: { code: string } }>(response).error.code).toBe('INVALID_TRANSACTION');
     });
 
     it('answers 409 when there are not enough units', async () => {
       const response = await request(server())
         .get('/quotes')
-        .query({ productId: 'prod-01', units: 9 })
+        .query({ items: 'prod-01:9' })
         .expect(409);
 
       expect(body<{ error: { code: string } }>(response).error.code).toBe('INSUFFICIENT_STOCK');
     });
 
     it('answers 422 for a quantity outside the allowed range', async () => {
-      await request(server()).get('/quotes').query({ productId: 'prod-01', units: 50 }).expect(422);
+      await request(server()).get('/quotes').query({ items: 'prod-01:50' }).expect(422);
     });
   });
 
@@ -118,6 +162,35 @@ describe('TransactionController', () => {
       // The full address and the phone number are held for delivery, not echoed.
       expect(created.customer.email).toBe('l***@example.com');
       expect(JSON.stringify(created)).not.toContain('3001234567');
+    });
+
+    it('opens one transaction for several products', async () => {
+      const response = await request(server())
+        .post('/transactions')
+        .send(
+          aCommand({
+            items: [
+              { productId: 'prod-01', units: 1 },
+              { productId: 'prod-02', units: 1 },
+            ],
+            expectedTotalInCents: 2 * 150_000 + 1_700_00,
+          }),
+        )
+        .expect(201);
+
+      const created = body<{ items: { productId: string }[] }>(response);
+      expect(created.items.map((item) => item.productId)).toEqual(['prod-01', 'prod-02']);
+    });
+
+    it.each([
+      ['no items', { items: [] }],
+      ['items that are not a list', { items: 'prod-01:1' }],
+      ['an item without units', { items: [{ productId: 'prod-01' }] }],
+    ])('answers 422 for %s', async (_case, override) => {
+      await request(server())
+        .post('/transactions')
+        .send({ ...aCommand(), ...override })
+        .expect(422);
     });
 
     it('rejects a client-supplied amount field instead of ignoring it', async () => {

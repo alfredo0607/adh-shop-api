@@ -32,6 +32,15 @@ export class DynamoDeliveryRepository implements DeliveryRepository {
       }
 
       const item = response.Item as DeliveryItem;
+      const items =
+        item.items?.map((line) => ({
+          productId: line.productId,
+          name: line.productName,
+          units: line.units,
+        })) ??
+        (item.productId === undefined
+          ? []
+          : [{ productId: item.productId, name: item.productName ?? '', units: item.units ?? 0 }]);
 
       return DeliveryAddress.create(item)
         .mapErr((cause) => new CheckoutUnavailable('Stored delivery is malformed', cause))
@@ -39,9 +48,7 @@ export class DynamoDeliveryRepository implements DeliveryRepository {
           Delivery.restore({
             transactionId: item.transactionId,
             status: item.status as DeliveryStatus,
-            productId: item.productId,
-            productName: item.productName,
-            units: item.units,
+            items,
             recipientName: item.recipientName,
             recipientPhone: item.recipientPhone,
             address,

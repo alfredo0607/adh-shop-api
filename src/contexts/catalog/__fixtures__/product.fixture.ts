@@ -22,6 +22,7 @@ export const aProduct = (
     id: overrides.id ?? 'prod-1',
     name: 'Cafetera',
     description: 'A coffee maker',
+    category: 'coffee-makers',
     price: price.value,
     imageKey: 'product/cafetera.webp',
     stock: stock.value,

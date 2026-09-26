@@ -31,6 +31,12 @@ export interface ProductPage {
 export type StockTransitionError =
   ProductNotFound | InsufficientStock | InvalidStock | CatalogUnavailable;
 
+/** Some units of one product. An order is a list of these, one per product. */
+export interface StockLine {
+  readonly productId: string;
+  readonly units: number;
+}
+
 export interface ProductRepository {
   findAll(query: {
     limit: number;
@@ -40,19 +46,25 @@ export interface ProductRepository {
   findById(id: string): ResultAsync<Product, ProductNotFound | CatalogUnavailable>;
 
   /**
-   * Moves units from available to reserved in a single conditional write.
+   * Moves units from available to reserved, for every line at once: either
+   * all the products of an order are held, or none is.
    *
    * Deliberately not `save(product)`. A read-modify-write would let two buyers
    * both read the last unit, both pass the check in memory and both write back
    * a successful reservation. The condition has to be evaluated by the store,
    * atomically, which means the store needs to be told the intent rather than
    * handed a finished object.
+   *
+   * Returns the products as they stood when the units were taken, so the
+   * price charged is the price of the units actually held.
    */
-  reserveUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError>;
+  reserveAll(lines: readonly StockLine[]): ResultAsync<Product[], StockTransitionError>;
 
-  releaseUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError>;
+  /** Returns held units to the shelf, for every line at once. */
+  releaseAll(lines: readonly StockLine[]): ResultAsync<void, StockTransitionError>;
 
-  confirmUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError>;
+  /** Turns held units into sold ones, for every line at once. */
+  confirmAll(lines: readonly StockLine[]): ResultAsync<void, StockTransitionError>;
 }
 
 export const PRODUCT_REPOSITORY = Symbol('ProductRepository');

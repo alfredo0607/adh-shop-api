@@ -21,8 +21,26 @@ export class InsufficientStock extends DomainError {
   readonly code = 'INSUFFICIENT_STOCK';
   readonly kind = 'CONFLICT' as const;
 
-  constructor(requested: number, available: number) {
-    super(`Only ${available} units available`, { requested, available });
+  /**
+   * `productId` is known by whoever asked for the units, not by the stock
+   * counters that detect the shortfall, so it is added on the way out. An
+   * order holds several products, and the buyer needs to be told which one
+   * ran short.
+   */
+  constructor(
+    readonly requested: number,
+    readonly available: number,
+    readonly productId?: string,
+  ) {
+    super(`Only ${available} units available`, {
+      ...(productId === undefined ? {} : { productId }),
+      requested,
+      available,
+    });
+  }
+
+  forProduct(productId: string): InsufficientStock {
+    return new InsufficientStock(this.requested, this.available, productId);
   }
 }
 

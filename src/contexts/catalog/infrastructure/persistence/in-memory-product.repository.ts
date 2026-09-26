@@ -1,6 +1,7 @@
-import { ResultAsync, err, ok } from '../../../../shared/domain';
+import { ResultAsync, err } from '../../../../shared/domain';
 import {
   type CatalogUnavailable,
+  InsufficientStock,
   type InvalidCursor,
   ProductNotFound,
 } from '../../domain/catalog.errors';
@@ -8,8 +9,10 @@ import type { Product } from '../../domain/product';
 import type {
   ProductPage,
   ProductRepository,
+  StockLine,
   StockTransitionError,
 } from '../../domain/product.repository';
+import { checkStockLines } from '../../domain/stock';
 
 /**
  * In-memory implementation of the port, for tests.
@@ -59,35 +62,55 @@ export class InMemoryProductRepository implements ProductRepository {
       : ResultAsync.ok(product);
   }
 
-  reserveUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError> {
-    return this.apply(productId, (product) => product.reserve(units));
+  reserveAll(lines: readonly StockLine[]): ResultAsync<Product[], StockTransitionError> {
+    return this.applyAll(lines, (product, units) => product.reserve(units));
   }
 
-  releaseUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError> {
-    return this.apply(productId, (product) => product.releaseReservation(units));
+  releaseAll(lines: readonly StockLine[]): ResultAsync<void, StockTransitionError> {
+    return this.applyAll(lines, (product, units) => product.releaseReservation(units)).map(
+      () => undefined,
+    );
   }
 
-  confirmUnits(productId: string, units: number): ResultAsync<Product, StockTransitionError> {
-    return this.apply(productId, (product) => product.confirmReservation(units));
+  confirmAll(lines: readonly StockLine[]): ResultAsync<void, StockTransitionError> {
+    return this.applyAll(lines, (product, units) => product.confirmReservation(units)).map(
+      () => undefined,
+    );
   }
 
-  private apply(
-    productId: string,
-    transition: (product: Product) => ReturnType<Product['reserve']>,
-  ): ResultAsync<Product, StockTransitionError> {
-    const product = this.products.get(productId);
-
-    if (product === undefined) {
-      return ResultAsync.fromResult(err(new ProductNotFound(productId)));
+  /**
+   * All or nothing, as the DynamoDB transaction is: every transition is
+   * computed first, and the store changes only if all of them succeed.
+   */
+  private applyAll(
+    lines: readonly StockLine[],
+    transition: (product: Product, units: number) => ReturnType<Product['reserve']>,
+  ): ResultAsync<Product[], StockTransitionError> {
+    const checked = checkStockLines(lines);
+    if (checked.isErr()) {
+      return ResultAsync.err(checked.error);
     }
 
-    const result = transition(product);
+    const next: Product[] = [];
+    for (const { productId, units } of checked.value) {
+      const product = this.products.get(productId);
+      if (product === undefined) {
+        return ResultAsync.err(new ProductNotFound(productId));
+      }
 
-    if (result.isErr()) {
-      return ResultAsync.fromResult(err(result.error));
+      const result = transition(product, units);
+      if (result.isErr()) {
+        const error = result.error;
+        return ResultAsync.err(
+          error instanceof InsufficientStock ? error.forProduct(productId) : error,
+        );
+      }
+      next.push(result.value);
     }
 
-    this.products.set(productId, result.value);
-    return ResultAsync.fromResult(ok(result.value));
+    for (const product of next) {
+      this.products.set(product.id, product);
+    }
+    return ResultAsync.ok(next);
   }
 }

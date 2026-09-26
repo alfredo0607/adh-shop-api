@@ -8,8 +8,16 @@ import type { Transaction } from './transaction';
  */
 export type DeliveryStatus = 'PREPARING' | 'SHIPPED' | 'DELIVERED';
 
+/** A product in the parcel. */
+export interface DeliveryItem {
+  readonly productId: string;
+  readonly name: string;
+  readonly units: number;
+}
+
 /**
- * The product assigned to a buyer once their payment is approved.
+ * The parcel assigned to a buyer once their payment is approved: every product
+ * of the order, to one address.
  *
  * One per approved transaction, created in the same write that approves it:
  * an approved payment with no delivery would be money taken for nothing.
@@ -21,9 +29,7 @@ export class Delivery {
   private constructor(
     readonly transactionId: string,
     readonly status: DeliveryStatus,
-    readonly productId: string,
-    readonly productName: string,
-    readonly units: number,
+    readonly items: readonly DeliveryItem[],
     readonly recipientName: string,
     readonly recipientPhone: string,
     readonly address: DeliveryAddress,
@@ -35,9 +41,7 @@ export class Delivery {
     return new Delivery(
       transaction.id,
       'PREPARING',
-      transaction.product.id,
-      transaction.product.name,
-      transaction.quote.units,
+      transaction.lines.map(({ productId, name, units }) => ({ productId, name, units })),
       transaction.customer.fullName,
       transaction.customer.phone,
       transaction.deliveryAddress,
@@ -49,9 +53,7 @@ export class Delivery {
   static restore(input: {
     transactionId: string;
     status: DeliveryStatus;
-    productId: string;
-    productName: string;
-    units: number;
+    items: readonly DeliveryItem[];
     recipientName: string;
     recipientPhone: string;
     address: DeliveryAddress;
@@ -61,9 +63,7 @@ export class Delivery {
     return new Delivery(
       input.transactionId,
       input.status,
-      input.productId,
-      input.productName,
-      input.units,
+      input.items,
       input.recipientName,
       input.recipientPhone,
       input.address,

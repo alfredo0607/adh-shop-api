@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 import type { ImageUrlSigner } from '../../application/image-url-signer.port';
+import { PRODUCT_CATEGORIES, type ProductCategory } from '../../domain/category';
 import type { Product } from '../../domain/product';
 import type { ProductPage } from '../../domain/product.repository';
 
@@ -22,6 +23,13 @@ export class ProductResponse {
 
   @ApiProperty({ example: 'Cafetera espresso manual con tanque de 1,5 L' })
   readonly description!: string;
+
+  @ApiProperty({
+    enum: PRODUCT_CATEGORIES,
+    example: 'coffee-makers',
+    description: 'A stable code; the storefront chooses the words shown for it',
+  })
+  readonly category!: ProductCategory;
 
   @ApiProperty({ example: 89_990_00, description: 'Integer minor units, never a decimal' })
   readonly priceInCents!: number;
@@ -48,6 +56,7 @@ export class ProductResponse {
       id: snapshot.id,
       name: snapshot.name,
       description: snapshot.description,
+      category: snapshot.category,
       priceInCents: snapshot.priceInCents,
       currency: snapshot.currency,
       imageUrl: images.sign(snapshot.imageKey),

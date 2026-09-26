@@ -2,6 +2,7 @@ import { type Result, err, ok } from '../../../shared/domain';
 
 import { type InsufficientStock, type InvalidProduct, type InvalidStock } from './catalog.errors';
 import { InvalidProduct as InvalidProductError } from './catalog.errors';
+import { type ProductCategory, isProductCategory } from './category';
 import type { Money } from './money';
 import type { Stock } from './stock';
 
@@ -9,6 +10,7 @@ export interface ProductSnapshot {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly category: ProductCategory;
   readonly priceInCents: number;
   readonly currency: string;
   readonly imageKey: string;
@@ -36,6 +38,7 @@ export class Product {
     readonly id: string,
     readonly name: string,
     readonly description: string,
+    readonly category: ProductCategory,
     readonly price: Money,
     readonly imageKey: string,
     readonly stock: Stock,
@@ -51,6 +54,7 @@ export class Product {
     id: string;
     name: string;
     description: string;
+    category: string;
     price: Money;
     imageKey: string;
     stock: Stock;
@@ -64,11 +68,21 @@ export class Product {
       return err(new InvalidProductError('Product name cannot be empty', { id: input.id }));
     }
 
+    if (!isProductCategory(input.category)) {
+      return err(
+        new InvalidProductError('Unknown product category', {
+          id: input.id,
+          category: input.category,
+        }),
+      );
+    }
+
     return ok(
       new Product(
         input.id,
         input.name,
         input.description,
+        input.category,
         input.price,
         input.imageKey,
         input.stock,
@@ -98,6 +112,7 @@ export class Product {
       id: this.id,
       name: this.name,
       description: this.description,
+      category: this.category,
       priceInCents: this.price.amountInCents,
       currency: this.price.currency,
       imageKey: this.imageKey,
@@ -112,6 +127,7 @@ export class Product {
       this.id,
       this.name,
       this.description,
+      this.category,
       this.price,
       this.imageKey,
       stock,

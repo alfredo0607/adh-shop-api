@@ -60,18 +60,18 @@ the API those screens call.
 
 ### Business process
 
-| #     | The exercise asks                                                 | Status | How                                                                                                                                |
-| ----- | ----------------------------------------------------------------- | :----: | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Show the product with its stock, description and price            |   ✅   | `GET /products` and `/products/{id}`: live stock, integer prices, images through signed, expiring CloudFront URLs                  |
-| 2–3   | Take credit card data, validated, with fake but well-formed cards |   ✅   | The card is tokenised by the gateway in the browser; the API accepts only the token and refuses anything shaped like a card number |
-| 3     | Take delivery information                                         |   ✅   | Validated in the domain: name, email, phone, address, city, region, optional postal code; deliveries within Colombia only          |
-| 4     | Summary: product amount + base fee + delivery fee                 |   ✅   | `GET /quotes` computes it on the server in integer cents; nothing is reserved yet                                                  |
-| 5.1   | Create a PENDING transaction and obtain its number                |   ✅   | `POST /transactions` → `201` with `Location`; units reserved atomically; the id doubles as the payment reference                   |
-| 5.2   | Call the payment gateway to complete the payment                  |   ✅   | `POST /transactions/{id}/payment`: idempotent (`Idempotency-Key`), amount signed with the integrity secret                         |
-| 5.3.1 | Update the transaction with the result                            |   ✅   | Settled by polling (`GET /transactions/{id}` asks the gateway) and by the signed webhook, whichever comes first                    |
-| 5.3.2 | Assign the product to be delivered                                |   ✅   | An approval creates the delivery in the same write; `GET /transactions/{id}/delivery`                                              |
-| 5.3.3 | Update the product's stock                                        |   ✅   | Approved: units sold. Declined or abandoned: units returned. Atomic with the status change                                         |
-| 6     | Show the final result, then the product with its updated stock    |   ✅   | `GET /transactions/{id}` for the outcome; `GET /products` reflects the new stock immediately                                       |
+| #     | The exercise asks                                                 | Status | How                                                                                                                                                |
+| ----- | ----------------------------------------------------------------- | :----: | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Show the product with its stock, description and price            |   ✅   | `GET /products` and `/products/{id}`: live stock, integer prices, images through signed, expiring CloudFront URLs                                  |
+| 2–3   | Take credit card data, validated, with fake but well-formed cards |   ✅   | The card is tokenised by the gateway in the browser; the API accepts only the token and refuses anything shaped like a card number                 |
+| 3     | Take delivery information                                         |   ✅   | Validated in the domain: name, email, phone, address, city, region, optional postal code; deliveries within Colombia only                          |
+| 4     | Summary: product amount + base fee + delivery fee                 |   ✅   | `GET /quotes?items=` prices one or more products on the server in integer cents; fees are charged once per order; nothing is reserved yet          |
+| 5.1   | Create a PENDING transaction and obtain its number                |   ✅   | `POST /transactions` → `201` with `Location`; the units of every product are reserved in one atomic write; the id doubles as the payment reference |
+| 5.2   | Call the payment gateway to complete the payment                  |   ✅   | `POST /transactions/{id}/payment`: idempotent (`Idempotency-Key`), amount signed with the integrity secret                                         |
+| 5.3.1 | Update the transaction with the result                            |   ✅   | Settled by polling (`GET /transactions/{id}` asks the gateway) and by the signed webhook, whichever comes first                                    |
+| 5.3.2 | Assign the product to be delivered                                |   ✅   | An approval creates the delivery, with every product of the order, in the same write; `GET /transactions/{id}/delivery`                            |
+| 5.3.3 | Update the product's stock                                        |   ✅   | Approved: units sold. Declined or abandoned: units returned. Every product of the order, atomic with the status change                             |
+| 6     | Show the final result, then the product with its updated stock    |   ✅   | `GET /transactions/{id}` for the outcome; `GET /products` reflects the new stock immediately                                                       |
 
 ### Responsibilities
 
@@ -95,7 +95,7 @@ the API those screens call.
 | Railway Oriented Programming in the use cases                  |   ✅   | `Result` / `ResultAsync`, including compensation on the failure track (`orElse`)                  |
 | Any database, with the data model in the README                |   ✅   | DynamoDB single-table design with every access pattern ([Data model](#data-model))                |
 | Any ORM or serialisation library                               |   ✅   | AWS SDK DocumentClient; explicit response DTOs, so no entity is serialised by accident            |
-| Database seeded with dummy products, no create endpoint        |   ✅   | `pnpm seed`, idempotent; six products, one deliberately sold out                                  |
+| Database seeded with dummy products, no create endpoint        |   ✅   | `pnpm seed`, idempotent; eighteen products in five categories, one deliberately sold out          |
 | Unit tests with Jest, over 80% coverage, results in the README |   ✅   | **97.9%** statements across 479 tests ([Tests and coverage](#tests-and-coverage))                 |
 | Published on a cloud provider                                  |   ✅   | AWS: EC2, ECR, DynamoDB, ElastiCache, S3, CloudFront, SSM, CloudWatch ([Deployment](#deployment)) |
 | Sandbox mode only                                              |   ✅   | Sandbox keys and base URL, read from Parameter Store                                              |
@@ -136,11 +136,11 @@ sequenceDiagram
     S->>G: POST card data with the public key
     G-->>S: card token (card data never reaches the API)
 
-    S->>A: GET /quotes?productId&units
-    A-->>S: product amount + base fee + delivery fee
+    S->>A: GET /quotes?items=prod-a:1,prod-b:2
+    A-->>S: one line per product + base fee + delivery fee
 
-    S->>A: POST /transactions (expected total)
-    A->>D: reserve units (conditional) · upsert customer · create PENDING
+    S->>A: POST /transactions (items, expected total)
+    A->>D: reserve every product (one transaction) · upsert customer · create PENDING
     A-->>S: 201 Location: /transactions/{id}
 
     S->>A: POST /transactions/{id}/payment (Idempotency-Key, card token)
@@ -157,6 +157,9 @@ sequenceDiagram
     G-)A: POST /payment-events (signed), same settlement
 ```
 
+- **One order, several products.** The storefront's cart sends every product in one
+  transaction; the "Pay with credit card" button on a product page sends one. Both follow
+  the same path.
 - **Approved:** the reserved units are sold and a delivery is assigned, in one DynamoDB
   transaction.
 - **Declined, voided or error:** the units return to stock.
@@ -176,15 +179,21 @@ All under `/api/v1`. Errors share one envelope:
 
 | Method | Path                          | Purpose                                                    | Success | Notable errors                                                                                  |
 | ------ | ----------------------------- | ---------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| GET    | `/products`                   | Paginated catalogue with stock and signed image URLs       | 200     | 422 `INVALID_CURSOR`                                                                            |
+| GET    | `/products`                   | Paginated catalogue with category, stock and signed images | 200     | 422 `INVALID_CURSOR`                                                                            |
 | GET    | `/products/{id}`              | One product                                                | 200     | 404 `PRODUCT_NOT_FOUND`                                                                         |
-| GET    | `/quotes`                     | Price an order for the summary screen; reserves nothing    | 200     | 404, 409 `INSUFFICIENT_STOCK`                                                                   |
-| POST   | `/transactions`               | Open a `PENDING` transaction and reserve the units         | 201     | 409 `INSUFFICIENT_STOCK`, 422 `AMOUNT_MISMATCH`, `INVALID_CUSTOMER`, `INVALID_DELIVERY_ADDRESS` |
+| GET    | `/quotes?items=`              | Price an order of 1–10 products; reserves nothing          | 200     | 404, 409 `INSUFFICIENT_STOCK` (names the product), 422 `INVALID_TRANSACTION`                    |
+| POST   | `/transactions`               | Open a `PENDING` transaction and reserve every product     | 201     | 409 `INSUFFICIENT_STOCK`, 422 `AMOUNT_MISMATCH`, `INVALID_CUSTOMER`, `INVALID_DELIVERY_ADDRESS` |
 | GET    | `/transactions/{id}`          | Read a transaction; settles it if the gateway has answered | 200     | 400 (not a UUID), 404                                                                           |
 | GET    | `/transactions/{id}/delivery` | The delivery assigned to an approved transaction           | 200     | 404 `DELIVERY_NOT_FOUND`                                                                        |
 | GET    | `/payment-terms`              | Acceptance documents, public key, tokenisation URL         | 200     | 503 `PAYMENT_GATEWAY_UNAVAILABLE`                                                               |
 | POST   | `/transactions/{id}/payment`  | Charge the card; requires `Idempotency-Key`                | 202     | 400 (no key), 409 `TRANSACTION_NOT_PAYABLE` / `RESERVATION_EXPIRED`, 422 `PAYMENT_REJECTED`     |
 | POST   | `/payment-events`             | Gateway webhook; signature verified (not in Swagger)       | 200     | 401 `INVALID_PAYMENT_EVENT`                                                                     |
+
+An order is a list of products, each with its units: `items=prod-a:1,prod-b:2` on
+`GET /quotes`, `"items": [{ "productId", "units" }]` on `POST /transactions`. Up to 10
+products, each once, with 1 to 10 units. The base and delivery fees are charged once per
+order. A shortage answers `409 INSUFFICIENT_STOCK` with the product's id in `details`, so
+the storefront can say which one ran short.
 
 HTTP semantics are deliberate: a declined card is a **successful request** whose payment
 failed, so it is a status in a 200 body, never an error. `400` is for a request that
@@ -237,13 +246,13 @@ A single table lets related items be read in one query and written in one transa
 approving a payment updates the transaction, the product's stock and the delivery
 atomically.
 
-| Entity          | `PK`                       | `SK`        | `GSI1PK` / `GSI1SK`                                       | Main attributes                                                                                                                       |
-| --------------- | -------------------------- | ----------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Product         | `PRODUCT#<id>`             | `#META`     | `PRODUCT` / `<id>`                                        | name, description, priceInCents, currency, imageKey, available, reserved, version                                                     |
-| Customer        | `CUSTOMER#<sha256(email)>` | `#PROFILE`  | —                                                         | id, fullName, email, phone, createdAt                                                                                                 |
-| Transaction     | `TRANSACTION#<uuid>`       | `#META`     | `PENDING_TRANSACTION` / deadline — **only while PENDING** | status, product, units, amounts, customer and address snapshot, reservationExpiresAt, paymentClaimedAt, gatewayTransactionId, version |
-| Delivery        | `TRANSACTION#<uuid>`       | `#DELIVERY` | —                                                         | status, product, units, recipient, address, estimatedDeliveryAt                                                                       |
-| Idempotency key | `IDEMPOTENCY#<key>`        | `#REQUEST`  | —                                                         | state, fingerprint, stored response, `expiresAt` (TTL)                                                                                |
+| Entity          | `PK`                       | `SK`        | `GSI1PK` / `GSI1SK`                                       | Main attributes                                                                                                                                           |
+| --------------- | -------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Product         | `PRODUCT#<id>`             | `#META`     | `PRODUCT` / `<id>`                                        | name, description, category, priceInCents, currency, imageKey, available, reserved, version                                                               |
+| Customer        | `CUSTOMER#<sha256(email)>` | `#PROFILE`  | —                                                         | id, fullName, email, phone, createdAt                                                                                                                     |
+| Transaction     | `TRANSACTION#<uuid>`       | `#META`     | `PENDING_TRANSACTION` / deadline — **only while PENDING** | status, lines (product, unit price, units), amounts, customer and address snapshot, reservationExpiresAt, paymentClaimedAt, gatewayTransactionId, version |
+| Delivery        | `TRANSACTION#<uuid>`       | `#DELIVERY` | —                                                         | status, items (product, units), recipient, address, estimatedDeliveryAt                                                                                   |
+| Idempotency key | `IDEMPOTENCY#<key>`        | `#REQUEST`  | —                                                         | state, fingerprint, stored response, `expiresAt` (TTL)                                                                                                    |
 
 | Access pattern                     | How                                                                              |
 | ---------------------------------- | -------------------------------------------------------------------------------- |
@@ -258,25 +267,30 @@ Money is always integer minor units (`8999000` = $89,990.00 COP). Customer and a
 The reservation deadline is deliberately **not** called `expiresAt`: that is the TTL
 attribute, and DynamoDB would delete the order.
 
+An order's products are a list attribute on the transaction and on the delivery, read and
+written with them. Items written before orders could hold several products keep the single
+product in top-level attributes, and are read back as a one-line order: no migration is
+needed.
+
 ## Consistency and concurrency
 
 Every invariant is enforced by the store, not by a read-then-write in the process:
 
 | Risk                                     | Guard                                                                                                                                   |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Two buyers take the last unit            | `UpdateItem … ConditionExpression available >= :units`                                                                                  |
+| Two buyers take the last unit            | `TransactWriteItems`, one conditional update per product (`available >= :units`): every product of the order is held, or none           |
 | Double tap / retry charges twice         | `Idempotency-Key` replays the stored response; **and** the transaction is claimed with a conditional write before the gateway is called |
 | Webhook and polling settle at once       | Settlement conditioned on `status = PENDING AND version = previous`; the loser re-reads                                                 |
-| Approval leaves stock or delivery behind | `TransactWriteItems`: transaction + stock + delivery, all or nothing                                                                    |
+| Approval leaves stock or delivery behind | `TransactWriteItems`: transaction + the stock of every product + delivery, all or nothing                                               |
 | Buyer abandons checkout                  | Expiry job every 60 s; never expires a payment still in flight at the gateway                                                           |
 | Charge call times out                    | Claim kept, outcome found later by reference; nothing is charged twice                                                                  |
-| Price changes between summary and pay    | Client sends the total it showed; mismatch → `422 AMOUNT_MISMATCH`                                                                      |
+| Price changes between summary and pay    | Client sends the total it showed; mismatch → `422 AMOUNT_MISMATCH`. Each reservation is also conditioned on the price it read           |
 
 These are verified against a real engine in
 [`single-table.integration.spec.ts`](src/shared/infrastructure/persistence/single-table.integration.spec.ts):
-ten concurrent buyers for three units produce exactly three reservations, two concurrent
-payment claims produce exactly one, and an inconsistent stock row rolls the whole
-settlement back.
+ten concurrent buyers for three units produce exactly three reservations, an order with
+one short product reserves none of the others, two concurrent payment claims produce
+exactly one, and an inconsistent stock row rolls the whole settlement back.
 
 ## Security
 
@@ -308,30 +322,30 @@ Details: [`docs/guide/security.md`](docs/guide/security.md).
 ## Tests and coverage
 
 ```
-pnpm test        # 479 tests
+pnpm test        # 541 tests
 pnpm test:cov    # with the 80% threshold enforced
 ```
 
-Latest run: **46 suites, 479 tests, all passing.**
+Latest run: **46 suites, 541 tests, all passing.**
 
 | Scope                            | Statements |   Branches |  Functions |      Lines |
 | -------------------------------- | ---------: | ---------: | ---------: | ---------: |
-| **All files**                    | **97.94%** | **87.62%** | **98.02%** | **97.97%** |
-| catalog · domain                 |     97.08% |     93.10% |       100% |     97.00% |
+| **All files**                    | **97.98%** | **87.60%** | **98.23%** | **98.05%** |
+| catalog · domain                 |     97.66% |     94.87% |       100% |     97.52% |
 | catalog · application            |       100% |       100% |       100% |       100% |
-| catalog · persistence            |     98.00% |     86.95% |     96.96% |     97.84% |
-| checkout · domain                |     98.50% |     96.29% |       100% |     98.49% |
-| checkout · application           |     97.24% |     84.61% |     96.49% |     97.85% |
-| checkout · payment gateway       |     98.00% |     93.18% |       100% |     97.93% |
-| checkout · persistence           |     97.12% |     85.24% |     98.18% |     96.92% |
-| shared · domain (Result, errors) |     99.09% |     93.75% |       100% |     99.00% |
+| catalog · persistence            |     97.89% |     86.89% |       100% |     98.50% |
+| checkout · domain                |     98.61% |     96.61% |       100% |     98.57% |
+| checkout · application           |     97.39% |     84.62% |     96.77% |     97.93% |
+| checkout · payment gateway       |     98.00% |     93.18% |       100% |     97.94% |
+| checkout · persistence           |     97.39% |     84.21% |     98.39% |     97.16% |
+| shared · domain (Result, errors) |     99.16% |     93.94% |       100% |     99.07% |
 | shared · idempotency             |     97.70% |     76.19% |     94.44% |     98.78% |
-| shared · rate limit              |     93.33% |     75.00% |     93.33% |     92.64% |
+| shared · rate limit              |     93.33% |     75.00% |     93.33% |     92.65% |
 
 What the suite covers, beyond line counts:
 
-- **Domain**: every entity and value object, including money arithmetic in cents, stock
-  transitions, the payment claim, settlement and expiry rules.
+- **Domain**: every entity and value object, including money arithmetic in cents, orders
+  of several products, stock transitions, the payment claim, settlement and expiry rules.
 - **Use cases** against in-memory adapters that behave like the real ones: compensation
   after a failed write, idempotent settlement, lost races, gateway outages.
 - **HTTP contracts** through the real pipe and exception filter: status codes, `Location`,

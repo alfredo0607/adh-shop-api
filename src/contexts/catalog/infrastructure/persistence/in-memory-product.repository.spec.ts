@@ -1,4 +1,5 @@
 import { aProduct } from '../../__fixtures__/product.fixture';
+import type { StockLine } from '../../domain/product.repository';
 import { InMemoryProductRepository } from './in-memory-product.repository';
 
 describe('InMemoryProductRepository', () => {
@@ -59,64 +60,93 @@ describe('InMemoryProductRepository', () => {
   });
 
   describe('stock transitions', () => {
+    const line = (productId: string, units: number): StockLine => ({ productId, units });
+
+    const stockOf = async (
+      repository: InMemoryProductRepository,
+      id: string,
+    ): Promise<{ available: number; reserved: number }> => {
+      const product = await repository.findById(id);
+      if (product.isErr()) throw new Error('fixture product vanished');
+      return { available: product.value.stock.available, reserved: product.value.stock.reserved };
+    };
+
     it('persists a reservation so the next read sees it', async () => {
       const repository = new InMemoryProductRepository([aProduct({ id: 'p1', available: 10 })]);
 
-      await repository.reserveUnits('p1', 4);
-      const reloaded = await repository.findById('p1');
+      await repository.reserveAll([line('p1', 4)]);
 
       // A mock would pass this without storing anything. A real double does not.
-      if (reloaded.isOk()) {
-        expect(reloaded.value.stock.available).toBe(6);
-        expect(reloaded.value.stock.reserved).toBe(4);
-      }
+      expect(await stockOf(repository, 'p1')).toEqual({ available: 6, reserved: 4 });
     });
 
-    it('refuses to reserve beyond what is available and changes nothing', async () => {
-      const repository = new InMemoryProductRepository([aProduct({ id: 'p1', available: 2 })]);
+    it('reserves every line of an order together', async () => {
+      const repository = new InMemoryProductRepository([
+        aProduct({ id: 'p1', available: 10 }),
+        aProduct({ id: 'p2', available: 2 }),
+      ]);
 
-      const result = await repository.reserveUnits('p1', 5);
-      const reloaded = await repository.findById('p1');
+      const result = await repository.reserveAll([line('p1', 3), line('p2', 2)]);
 
-      expect(result.isErr()).toBe(true);
-      if (reloaded.isOk()) {
-        expect(reloaded.value.stock.available).toBe(2);
-        expect(reloaded.value.stock.reserved).toBe(0);
-      }
+      expect(result.isOk() && result.value.map((product) => product.id)).toEqual(['p1', 'p2']);
+      expect(await stockOf(repository, 'p1')).toEqual({ available: 7, reserved: 3 });
+      expect(await stockOf(repository, 'p2')).toEqual({ available: 0, reserved: 2 });
+    });
+
+    it('changes nothing when any line is short, and says which one', async () => {
+      const repository = new InMemoryProductRepository([
+        aProduct({ id: 'p1', available: 10 }),
+        aProduct({ id: 'p2', available: 2 }),
+      ]);
+
+      const result = await repository.reserveAll([line('p1', 3), line('p2', 5)]);
+
+      expect(result.isErr() && result.error.details).toEqual({
+        productId: 'p2',
+        requested: 5,
+        available: 2,
+      });
+      expect(await stockOf(repository, 'p1')).toEqual({ available: 10, reserved: 0 });
+      expect(await stockOf(repository, 'p2')).toEqual({ available: 2, reserved: 0 });
     });
 
     it('confirms a reservation, removing the units', async () => {
       const repository = new InMemoryProductRepository([aProduct({ id: 'p1', available: 10 })]);
 
-      await repository.reserveUnits('p1', 3);
-      await repository.confirmUnits('p1', 3);
-      const reloaded = await repository.findById('p1');
+      await repository.reserveAll([line('p1', 3)]);
+      await repository.confirmAll([line('p1', 3)]);
 
-      if (reloaded.isOk()) {
-        expect(reloaded.value.stock.total).toBe(7);
-      }
+      expect(await stockOf(repository, 'p1')).toEqual({ available: 7, reserved: 0 });
     });
 
     it('releases a reservation, restoring the shelf exactly', async () => {
       const repository = new InMemoryProductRepository([aProduct({ id: 'p1', available: 10 })]);
 
-      await repository.reserveUnits('p1', 3);
-      await repository.releaseUnits('p1', 3);
-      const reloaded = await repository.findById('p1');
+      await repository.reserveAll([line('p1', 3)]);
+      await repository.releaseAll([line('p1', 3)]);
 
-      if (reloaded.isOk()) {
-        expect(reloaded.value.stock.available).toBe(10);
-        expect(reloaded.value.stock.reserved).toBe(0);
-      }
+      expect(await stockOf(repository, 'p1')).toEqual({ available: 10, reserved: 0 });
     });
 
-    it.each(['reserveUnits', 'confirmUnits', 'releaseUnits'] as const)(
+    it.each(['reserveAll', 'confirmAll', 'releaseAll'] as const)(
       '%s reports not found for an unknown product',
       async (method) => {
-        const result = await new InMemoryProductRepository()[method]('missing', 1);
+        const result = await new InMemoryProductRepository()[method]([line('missing', 1)]);
 
-        expect(result.isErr()).toBe(true);
+        expect(result.isErr() && result.error.code).toBe('PRODUCT_NOT_FOUND');
       },
     );
+
+    it.each([
+      ['no lines', []],
+      ['the same product twice', [line('p1', 1), line('p1', 1)]],
+      ['zero units', [line('p1', 0)]],
+    ])('refuses %s', async (_case, lines) => {
+      const repository = new InMemoryProductRepository([aProduct({ id: 'p1', available: 10 })]);
+
+      const result = await repository.reserveAll(lines);
+
+      expect(result.isErr() && result.error.code).toBe('INVALID_STOCK');
+    });
   });
 });

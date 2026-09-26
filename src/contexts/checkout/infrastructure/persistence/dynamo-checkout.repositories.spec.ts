@@ -4,8 +4,10 @@ import {
 } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
-import { NOW, aTransaction } from '../../__fixtures__/checkout.fixture';
+import { FEES, NOW, TTL_MS, aTransaction } from '../../__fixtures__/checkout.fixture';
 import { Delivery } from '../../domain/delivery';
+import { Quote } from '../../domain/quote';
+import { Transaction } from '../../domain/transaction';
 import { DynamoCustomerRepository, customerKey } from './dynamo-customer.repository';
 import { DynamoDeliveryRepository } from './dynamo-delivery.repository';
 import {
@@ -69,6 +71,55 @@ describe('DynamoTransactionRepository', () => {
     expect({ ...result.value.quote }).toEqual({ ...transaction.quote });
     expect({ ...result.value.deliveryAddress }).toEqual({ ...transaction.deliveryAddress });
     expect(result.value.customer.email).toBe('laura@example.com');
+  });
+
+  it('stores the products of the order as a list on the transaction itself', () => {
+    const item = toItem(aTransaction());
+
+    expect(item.lines).toEqual([
+      {
+        productId: 'prod-01',
+        productName: 'Cafetera',
+        unitPriceInCents: 150_000,
+        units: 1,
+        lineTotalInCents: 150_000,
+      },
+    ]);
+    expect(item).not.toHaveProperty('productId');
+  });
+
+  it('reads a transaction stored before orders held several products as one line', async () => {
+    const stored: Record<string, unknown> = {
+      ...toItem(aTransaction()),
+      productId: 'prod-legacy',
+      productName: 'Molino',
+      unitPriceInCents: 42_500_00,
+      units: 2,
+    };
+    delete stored['lines'];
+    const { client } = buildClient(() => ({ Item: stored }));
+
+    const result = await new DynamoTransactionRepository(client, 'table').findById('x');
+
+    expect(result.isOk() && result.value.lines).toEqual([
+      {
+        productId: 'prod-legacy',
+        name: 'Molino',
+        unitPriceInCents: 42_500_00,
+        units: 2,
+        lineTotalInCents: 85_000_00,
+      },
+    ]);
+  });
+
+  it('refuses a stored transaction with no products in either layout', async () => {
+    const stored: Record<string, unknown> = { ...toItem(aTransaction()) };
+    delete stored['lines'];
+    const { client } = buildClient(() => ({ Item: stored }));
+
+    const result = await new DynamoTransactionRepository(client, 'table').findById('x');
+
+    expect(result.isErr() && result.error.code).toBe('CHECKOUT_UNAVAILABLE');
   });
 
   it('answers not found when there is no such item', async () => {
@@ -227,6 +278,38 @@ describe('DynamoTransactionRepository settlement', () => {
     expect(items[1]?.Update?.UpdateExpression).toContain('#available = #available + :units');
   });
 
+  it('moves the stock of every product of the order in the same write', async () => {
+    const { client, sent } = buildClient(() => ({}));
+    const quote = Quote.calculate({
+      items: [
+        { productId: 'a', name: 'A', unitPriceInCents: 100, units: 2, currency: 'COP' },
+        { productId: 'b', name: 'B', unitPriceInCents: 100, units: 1, currency: 'COP' },
+      ],
+      fees: FEES,
+    });
+    if (quote.isErr()) throw new Error('fixture is invalid');
+    const base = aTransaction();
+    const approved = Transaction.open({
+      id: base.id,
+      quote: quote.value,
+      customer: base.customer,
+      deliveryAddress: base.deliveryAddress,
+      now: NOW,
+      reservationTtlMs: TTL_MS,
+    }).settle('APPROVED', NOW);
+    if (approved === undefined) throw new Error('fixture should settle');
+
+    await new DynamoTransactionRepository(client, 'table').saveSettlement(
+      approved,
+      Delivery.forApproved(approved, NOW),
+    );
+
+    const [, first, second, delivery] = itemsOf(sent);
+    expect(first?.Update?.Key).toEqual({ PK: 'PRODUCT#a', SK: '#META' });
+    expect(second?.Update?.Key).toEqual({ PK: 'PRODUCT#b', SK: '#META' });
+    expect(delivery?.Put?.Item['SK']).toBe('#DELIVERY');
+  });
+
   const cancelled = (codes: string[]): TransactionCanceledException =>
     new TransactionCanceledException({
       message: 'cancelled',
@@ -319,6 +402,33 @@ describe('DynamoDeliveryRepository', () => {
     expect(sent[0]?.input['Key']).toEqual({ PK: `TRANSACTION#${approved.id}`, SK: '#DELIVERY' });
     expect(result.isOk() && result.value.estimatedDeliveryAt).toEqual(delivery.estimatedDeliveryAt);
     expect(result.isOk() && result.value.recipientPhone).toBe(delivery.recipientPhone);
+  });
+
+  it('reads back every product in the parcel', async () => {
+    const { client } = buildClient(() => ({ Item: toDeliveryItem(delivery) }));
+
+    const result = await new DynamoDeliveryRepository(client, 'table').findByTransactionId('x');
+
+    expect(result.isOk() && result.value.items).toEqual([
+      { productId: 'prod-01', name: 'Cafetera', units: 1 },
+    ]);
+  });
+
+  it('reads a delivery stored before orders held several products as one item', async () => {
+    const stored: Record<string, unknown> = {
+      ...toDeliveryItem(delivery),
+      productId: 'prod-legacy',
+      productName: 'Molino',
+      units: 2,
+    };
+    delete stored['items'];
+    const { client } = buildClient(() => ({ Item: stored }));
+
+    const result = await new DynamoDeliveryRepository(client, 'table').findByTransactionId('x');
+
+    expect(result.isOk() && result.value.items).toEqual([
+      { productId: 'prod-legacy', name: 'Molino', units: 2 },
+    ]);
   });
 
   it('answers not found when the transaction has no delivery', async () => {

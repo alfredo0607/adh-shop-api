@@ -51,6 +51,24 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 
   /**
+   * Runs independent operations concurrently and collects their values, in
+   * order. If any fails, the result is the first failure in list order, not
+   * the first to arrive, so the error reported does not depend on timing.
+   */
+  static combine<T, E>(operations: readonly ResultAsync<T, E>[]): ResultAsync<T[], E> {
+    return new ResultAsync<T[], E>(
+      Promise.all(operations.map((operation) => operation.inner)).then((results) => {
+        const values: T[] = [];
+        for (const result of results) {
+          if (result.isErr()) return err<E, T[]>(result.error);
+          values.push(result.value);
+        }
+        return ok<T[], E>(values);
+      }),
+    );
+  }
+
+  /**
    * Transforms the value on the happy path.
    *
    * `fn` is deliberately synchronous. An asynchronous transformation is I/O, and

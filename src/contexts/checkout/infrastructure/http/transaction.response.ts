@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import type { Quote } from '../../domain/quote';
+import type { Quote, QuoteLine } from '../../domain/quote';
 import type { Transaction, TransactionStatus } from '../../domain/transaction';
 
 const STATUSES: TransactionStatus[] = [
@@ -13,7 +13,7 @@ const STATUSES: TransactionStatus[] = [
 ];
 
 export class AmountsResponse {
-  @ApiProperty({ example: 89_990_00 })
+  @ApiProperty({ example: 89_990_00, description: 'The sum of every line, before fees' })
   readonly productInCents!: number;
 
   @ApiProperty({ example: 500_00 })
@@ -39,32 +39,9 @@ export class AmountsResponse {
   }
 }
 
-export class QuoteResponse {
+export class OrderLineResponse {
   @ApiProperty({ example: 'prod-espresso-01' })
   readonly productId!: string;
-
-  @ApiProperty({ example: 1 })
-  readonly units!: number;
-
-  @ApiProperty({ example: 89_990_00 })
-  readonly unitPriceInCents!: number;
-
-  @ApiProperty({ type: AmountsResponse })
-  readonly amounts!: AmountsResponse;
-
-  static from(productId: string, quote: Quote): QuoteResponse {
-    return {
-      productId,
-      units: quote.units,
-      unitPriceInCents: quote.unitPriceInCents,
-      amounts: AmountsResponse.from(quote),
-    };
-  }
-}
-
-class PurchasedProductResponse {
-  @ApiProperty({ example: 'prod-espresso-01' })
-  readonly id!: string;
 
   @ApiProperty({ example: 'Cafetera espresso Artigiano' })
   readonly name!: string;
@@ -74,6 +51,34 @@ class PurchasedProductResponse {
 
   @ApiProperty({ example: 89_990_00 })
   readonly unitPriceInCents!: number;
+
+  @ApiProperty({ example: 89_990_00, description: 'unitPriceInCents × units' })
+  readonly lineTotalInCents!: number;
+
+  static from(line: QuoteLine): OrderLineResponse {
+    return {
+      productId: line.productId,
+      name: line.name,
+      units: line.units,
+      unitPriceInCents: line.unitPriceInCents,
+      lineTotalInCents: line.lineTotalInCents,
+    };
+  }
+}
+
+export class QuoteResponse {
+  @ApiProperty({ type: [OrderLineResponse], description: 'In the order they were asked for' })
+  readonly items!: OrderLineResponse[];
+
+  @ApiProperty({ type: AmountsResponse })
+  readonly amounts!: AmountsResponse;
+
+  static from(quote: Quote): QuoteResponse {
+    return {
+      items: quote.lines.map((line) => OrderLineResponse.from(line)),
+      amounts: AmountsResponse.from(quote),
+    };
+  }
 }
 
 class CustomerResponse {
@@ -128,8 +133,8 @@ export class TransactionResponse {
   })
   readonly paymentSubmitted!: boolean;
 
-  @ApiProperty({ type: PurchasedProductResponse })
-  readonly product!: PurchasedProductResponse;
+  @ApiProperty({ type: [OrderLineResponse] })
+  readonly items!: OrderLineResponse[];
 
   @ApiProperty({ type: AmountsResponse })
   readonly amounts!: AmountsResponse;
@@ -160,12 +165,7 @@ export class TransactionResponse {
       reference: transaction.reference,
       status: transaction.status,
       paymentSubmitted: transaction.paymentSubmitted,
-      product: {
-        id: transaction.product.id,
-        name: transaction.product.name,
-        units: quote.units,
-        unitPriceInCents: quote.unitPriceInCents,
-      },
+      items: quote.lines.map((line) => OrderLineResponse.from(line)),
       amounts: AmountsResponse.from(quote),
       customer: { fullName: customer.fullName, email: customer.maskedEmail },
       deliveryAddress: {
