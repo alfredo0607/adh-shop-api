@@ -42,6 +42,7 @@ export class TransactionController {
 
   @Get('quotes')
   @ApiOperation({
+    operationId: 'quoteOrder',
     summary: 'Price an order for the summary screen, without reserving anything',
   })
   @ApiOkResponse({ type: QuoteResponse })
@@ -60,6 +61,7 @@ export class TransactionController {
   @Post('transactions')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
+    operationId: 'createTransaction',
     summary: 'Open a PENDING transaction, reserving the units until it is paid or expires',
   })
   @ApiCreatedResponse({
@@ -87,6 +89,7 @@ export class TransactionController {
 
   @Get('transactions/:id')
   @ApiOperation({
+    operationId: 'getTransaction',
     summary: 'Read a transaction, which is how the storefront resumes after a refresh',
     description:
       'While a submitted payment is PENDING, the gateway is asked for its outcome before ' +
@@ -106,7 +109,10 @@ export class TransactionController {
   }
 
   @Get('transactions/:id/delivery')
-  @ApiOperation({ summary: 'The delivery assigned to an approved transaction' })
+  @ApiOperation({
+    operationId: 'getTransactionDelivery',
+    summary: 'The delivery assigned to an approved transaction',
+  })
   @ApiOkResponse({ type: DeliveryResponse })
   @ApiResponse({ status: 400, description: 'The id is not a UUID' })
   @ApiResponse({ status: 404, description: 'DELIVERY_NOT_FOUND — not approved, or unknown' })

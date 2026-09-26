@@ -29,7 +29,7 @@ export class ProductController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'List products available in the store' })
+  @ApiOperation({ operationId: 'listProducts', summary: 'List products available in the store' })
   @ApiOkResponse({ type: ProductPageResponse })
   // Short and revalidated. The catalogue changes whenever a unit is reserved,
   // so a long cache would show stock that is already gone; no cache at all
@@ -42,7 +42,7 @@ export class ProductController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Read a single product' })
+  @ApiOperation({ operationId: 'getProduct', summary: 'Read a single product' })
   @ApiParam({ name: 'id', example: 'prod-espresso-01' })
   @ApiOkResponse({ type: ProductResponse })
   @ApiResponse({ status: 404, description: 'No product with that id' })
