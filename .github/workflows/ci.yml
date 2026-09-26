@@ -192,7 +192,22 @@ jobs:
               # Ready means the table answered, not merely that the process is up.
               curl -fsS http://127.0.0.1:3000/ready
               # The README links the live API docs; losing them breaks a deliverable.
-              curl -fsS http://127.0.0.1:3000/api/docs-json > /dev/null
+              curl -fsS http://127.0.0.1:3000/api/docs-json > openapi.json
+
+              # The storefront generates its API client from this document, and
+              # names its hooks after each operationId. Every route must declare
+              # its own, in camelCase and unique; Nest's default leaks class names.
+              node -e "
+                const doc = require('./openapi.json');
+                const ids = Object.values(doc.paths).flatMap((ops) => Object.values(ops).map((op) => op.operationId));
+                const bad = ids.filter((id) => !/^[a-z][A-Za-z]+$/.test(id ?? ''));
+                const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+                if (bad.length || dupes.length) {
+                  console.error('operationIds must be explicit, camelCase and unique:', { bad, dupes });
+                  process.exit(1);
+                }
+                console.log('operationIds:', ids.join(', '));
+              "
 
               # The storefront is on another origin: a browser sends a preflight
               # before every write, and refuses the call without this answer.

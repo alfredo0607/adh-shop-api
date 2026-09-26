@@ -37,6 +37,7 @@ export class PaymentController {
 
   @Get('payment-terms')
   @ApiOperation({
+    operationId: 'getPaymentTerms',
     summary: 'Documents the buyer must accept, and where to tokenise the card',
   })
   @ApiOkResponse({ type: PaymentTermsResponse })
@@ -51,6 +52,7 @@ export class PaymentController {
   @HttpCode(HttpStatus.ACCEPTED)
   @UseInterceptors(IdempotencyInterceptor)
   @ApiOperation({
+    operationId: 'payTransaction',
     summary: 'Charge the card for a PENDING transaction',
     description:
       'Answers 202: the gateway settles the payment a few seconds later. Poll ' +
