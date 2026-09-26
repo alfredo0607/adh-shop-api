@@ -112,6 +112,13 @@ export const environmentSchema = z
     CDN_PRIVATE_KEY_BASE64: z.string().optional(),
     /** Minimum validity of an issued image URL; see CloudFrontImageUrlSigner. */
     IMAGE_URL_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
+
+    /**
+     * Where settled payments are announced, so the buyer is emailed. Optional:
+     * without it payments work as before and nobody is emailed, which is what
+     * a local run wants.
+     */
+    PAYMENT_EVENTS_QUEUE_URL: z.string().url().optional(),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV !== 'production') return;
