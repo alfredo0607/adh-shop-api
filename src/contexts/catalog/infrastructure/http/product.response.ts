@@ -62,6 +62,7 @@ export class ProductPageResponse {
   readonly items!: ProductResponse[];
 
   @ApiProperty({
+    type: String,
     nullable: true,
     example: 'eyJQSyI6IlBST0RVQ1QjMSJ9',
     description: 'Pass back as ?cursor= to read the next page. Null when there is no more.',
