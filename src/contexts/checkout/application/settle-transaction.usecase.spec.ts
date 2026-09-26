@@ -3,6 +3,7 @@ import { aProduct } from '../../catalog/__fixtures__/product.fixture';
 import { InMemoryProductRepository } from '../../catalog/infrastructure/persistence/in-memory-product.repository';
 import { NOW, TOTAL_FOR_ONE, aTransaction } from '../__fixtures__/checkout.fixture';
 import { CheckoutUnavailable, PaymentGatewayUnavailable } from '../domain/checkout.errors';
+import type { PaymentEventsPort, PaymentSettled } from '../domain/payment-events.port';
 import type { GatewayStatus } from '../domain/transaction';
 import { FakePaymentGateway } from '../infrastructure/payment/fake-payment.gateway';
 import { InMemoryTransactionRepository } from '../infrastructure/persistence/in-memory-checkout.repositories';
@@ -135,6 +136,108 @@ describe('SettleTransaction', () => {
     const result = await useCase.execute({ ...outcome('APPROVED'), reference: 'unknown' });
 
     expect(result.isErr() && result.error.code).toBe('TRANSACTION_NOT_FOUND');
+  });
+});
+
+describe('SettleTransaction, announcing the outcome', () => {
+  const ID = '6f1c2b9e-8f4a-4d7e-9a51-1b2c3d4e5f60';
+  const clock = { now: (): Date => new Date(NOW.getTime() + 60_000) };
+
+  const setup = async (
+    events: PaymentEventsPort,
+  ): Promise<{ useCase: SettleTransaction; transactions: InMemoryTransactionRepository }> => {
+    const transactions = new InMemoryTransactionRepository(
+      new InMemoryProductRepository([aProduct({ id: 'prod-01', available: 4, reserved: 1 })]),
+    );
+    const claimed = aTransaction({ id: ID }).claimPayment(clock.now());
+    if (claimed.isErr()) throw new Error('fixture claim failed');
+    await transactions.create(claimed.value.recordGatewayPayment('gw-1', clock.now()));
+    return { useCase: new SettleTransaction(transactions, clock, events), transactions };
+  };
+
+  const recorder = (): PaymentEventsPort & { received: PaymentSettled[] } => {
+    const received: PaymentSettled[] = [];
+    return {
+      received,
+      settled: (event): Promise<void> => {
+        received.push(event);
+        return Promise.resolve();
+      },
+    };
+  };
+
+  const outcome = (status: GatewayStatus): PaymentOutcome => ({
+    reference: ID,
+    gatewayTransactionId: 'gw-1',
+    status,
+    amountInCents: TOTAL_FOR_ONE,
+  });
+
+  it('announces an approval with its delivery, once stored', async () => {
+    const events = recorder();
+    const { useCase } = await setup(events);
+
+    await useCase.execute(outcome('APPROVED'));
+
+    expect(events.received).toHaveLength(1);
+    expect(events.received[0]?.transaction.status).toBe('APPROVED');
+    expect(events.received[0]?.delivery?.transactionId).toBe(ID);
+    expect(events.received[0]?.occurredAt).toEqual(clock.now());
+  });
+
+  it.each(['DECLINED', 'VOIDED', 'ERROR'] as const)(
+    'announces %s without a delivery',
+    async (status) => {
+      const events = recorder();
+      const { useCase } = await setup(events);
+
+      await useCase.execute(outcome(status));
+
+      expect(events.received).toHaveLength(1);
+      expect(events.received[0]?.transaction.status).toBe(status);
+      expect(events.received[0]?.delivery).toBeUndefined();
+    },
+  );
+
+  it('announces once however many times the outcome arrives', async () => {
+    const events = recorder();
+    const { useCase } = await setup(events);
+
+    await useCase.execute(outcome('APPROVED'));
+    await useCase.execute(outcome('APPROVED'));
+    await useCase.execute(outcome('DECLINED'));
+
+    expect(events.received).toHaveLength(1);
+  });
+
+  it('leaves the announcement to the winner when two writers race', async () => {
+    const events = recorder();
+    const { useCase, transactions } = await setup(events);
+    const stored = await transactions.findById(ID);
+    if (stored.isErr()) throw new Error('missing');
+
+    const racing = useCase.applyTo(stored.value, outcome('APPROVED'));
+    await useCase.execute(outcome('APPROVED'));
+    await racing;
+
+    expect(events.received).toHaveLength(1);
+  });
+
+  it('announces nothing while the gateway still says PENDING', async () => {
+    const events = recorder();
+    const { useCase } = await setup(events);
+
+    await useCase.execute(outcome('PENDING'));
+
+    expect(events.received).toHaveLength(0);
+  });
+
+  it('still settles when the announcement fails', async () => {
+    const { useCase } = await setup({ settled: () => Promise.reject(new Error('queue down')) });
+
+    const result = await useCase.execute(outcome('APPROVED'));
+
+    expect(result.isOk() && result.value.status).toBe('APPROVED');
   });
 });
 

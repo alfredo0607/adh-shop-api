@@ -125,6 +125,8 @@ sequenceDiagram
     participant A as ADH Shop API
     participant G as Payment gateway
     participant D as DynamoDB
+    participant Q as SQS payment emails
+    participant B as Buyer's inbox
 
     S->>A: GET /products
     A->>D: Query GSI1 (PRODUCT)
@@ -155,6 +157,8 @@ sequenceDiagram
         A-->>S: APPROVED / DECLINED / ...
     end
     G-)A: POST /payment-events (signed), same settlement
+    A-)Q: payment.settled v1 (SQS), by the writer that stored the outcome
+    Q-)B: email: approved, or refused (Lambda + Gmail, in adh-shop-infra)
 ```
 
 - **One order, several products.** The storefront's cart sends every product in one
@@ -165,6 +169,12 @@ sequenceDiagram
 - **Declined, voided or error:** the units return to stock.
 - **Abandoned:** a reservation unpaid after 15 minutes expires and its units return to
   stock (`EXPIRED`).
+- **Buyer emailed:** once a payment is final, the API sends a `payment.settled` event to
+  SQS and a Lambda emails the buyer: the products, the amounts and the delivery address,
+  approved or refused. Only the writer that stored the outcome sends it, so the buyer gets
+  one email however the outcome arrives. Sending is best effort: a queue failure is logged
+  and never fails the payment. An expired reservation sends nothing, since no payment was
+  made.
 - **Refresh-safe:** the storefront only needs the transaction id. `GET /transactions/{id}`
   returns the full state, including `paymentSubmitted`, so a reload resumes at the right
   screen.
@@ -402,6 +412,7 @@ See [`.env.example`](.env.example) for every variable with its rationale.
 | Images          | `CDN_DOMAIN`, `CDN_KEY_PAIR_ID`, `CDN_PRIVATE_KEY_BASE64`, `IMAGE_URL_TTL_SECONDS`                                                          |
 | Rate limiting   | `REDIS_*`, `RATE_LIMIT_*`, `TRUST_PROXY_HOPS`                                                                                               |
 | HTTP            | `CORS_ALLOWED_ORIGINS`                                                                                                                      |
+| Payment emails  | `PAYMENT_EVENTS_QUEUE_URL` (optional: without it no event is sent)                                                                          |
 
 ## Deployment
 

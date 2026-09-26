@@ -6,6 +6,7 @@ import {
   type TransactionNotFound,
 } from '../domain/checkout.errors';
 import { Delivery } from '../domain/delivery';
+import { NO_PAYMENT_EVENTS, type PaymentEventsPort } from '../domain/payment-events.port';
 import type { GatewayStatus, Transaction } from '../domain/transaction';
 import type { TransactionRepository } from '../domain/transaction.repository';
 
@@ -28,11 +29,15 @@ export type SettleTransactionError =
  * PENDING transaction — often for the same outcome, sometimes at the same
  * moment. Both are safe: a repeated outcome changes nothing, and when two
  * writers race, the loser re-reads and returns what the winner stored.
+ *
+ * Only the writer that stored the outcome announces it, so the buyer is
+ * emailed once however many times the outcome arrives.
  */
 export class SettleTransaction {
   constructor(
     private readonly transactions: TransactionRepository,
     private readonly clock: ClockPort,
+    private readonly events: PaymentEventsPort = NO_PAYMENT_EVENTS,
   ) {}
 
   execute(outcome: PaymentOutcome): ResultAsync<Transaction, SettleTransactionError> {
@@ -66,6 +71,15 @@ export class SettleTransaction {
 
     return this.transactions
       .saveSettlement(settled, delivery)
+      .andThen((stored) =>
+        ResultAsync.fromSafePromise<Transaction, SettlementConflict | CheckoutUnavailable>(
+          this.events.settled({ transaction: stored, delivery, occurredAt: now }).then(
+            () => stored,
+            // The contract says it never rejects; a payment is not failed if one does.
+            () => stored,
+          ),
+        ),
+      )
       .orElse((error: SettlementConflict | CheckoutUnavailable) =>
         error.code === 'SETTLEMENT_CONFLICT'
           ? this.transactions.findById(transaction.id)

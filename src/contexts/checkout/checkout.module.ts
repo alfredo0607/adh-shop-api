@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { SQSClient } from '@aws-sdk/client-sqs';
 
 import { CLOCK_PORT, type ClockPort } from '../../shared/domain/clock.port';
 import { ID_GENERATOR_PORT, type IdGeneratorPort } from '../../shared/domain/id-generator.port';
@@ -16,6 +17,11 @@ import { QuoteCheckout } from './application/quote-checkout.usecase';
 import { SettleTransaction } from './application/settle-transaction.usecase';
 import { CUSTOMER_REPOSITORY, type CustomerRepository } from './domain/customer.repository';
 import { INVENTORY_PORT, type InventoryPort } from './domain/inventory.port';
+import {
+  NO_PAYMENT_EVENTS,
+  PAYMENT_EVENTS_PORT,
+  type PaymentEventsPort,
+} from './domain/payment-events.port';
 import { PAYMENT_GATEWAY_PORT, type PaymentGatewayPort } from './domain/payment-gateway.port';
 import {
   DELIVERY_REPOSITORY,
@@ -30,6 +36,7 @@ import {
 } from './infrastructure/http/payment-events.controller';
 import { TransactionController } from './infrastructure/http/transaction.controller';
 import { CatalogInventoryAdapter } from './infrastructure/inventory/catalog-inventory.adapter';
+import { SqsPaymentEventsPublisher } from './infrastructure/notifications/sqs-payment-events.publisher';
 import { HttpPaymentGateway } from './infrastructure/payment/http-payment.gateway';
 import { PaymentEventVerifier } from './infrastructure/payment/payment-event.verifier';
 import { DynamoCustomerRepository } from './infrastructure/persistence/dynamo-customer.repository';
@@ -145,10 +152,24 @@ const CHECKOUT_POLICY = Symbol('CheckoutPolicy');
         new DynamoDeliveryRepository(client, environment.DYNAMODB_TABLE_NAME),
     },
     {
+      provide: PAYMENT_EVENTS_PORT,
+      inject: [ENVIRONMENT],
+      useFactory: (environment: Environment): PaymentEventsPort =>
+        environment.PAYMENT_EVENTS_QUEUE_URL === undefined
+          ? NO_PAYMENT_EVENTS
+          : new SqsPaymentEventsPublisher(
+              new SQSClient({ region: environment.AWS_REGION, maxAttempts: 3 }),
+              environment.PAYMENT_EVENTS_QUEUE_URL,
+            ),
+    },
+    {
       provide: SettleTransaction,
-      inject: [TRANSACTION_REPOSITORY, CLOCK_PORT],
-      useFactory: (transactions: TransactionRepository, clock: ClockPort): SettleTransaction =>
-        new SettleTransaction(transactions, clock),
+      inject: [TRANSACTION_REPOSITORY, CLOCK_PORT, PAYMENT_EVENTS_PORT],
+      useFactory: (
+        transactions: TransactionRepository,
+        clock: ClockPort,
+        events: PaymentEventsPort,
+      ): SettleTransaction => new SettleTransaction(transactions, clock, events),
     },
     {
       provide: FindTransaction,
