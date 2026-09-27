@@ -1,0 +1,848 @@
+{
+  "info": {
+    "_postman_id": "b3f1c2a4-6d1e-4f0b-9a57-3c2e8f4d1a60",
+    "name": "ADH Shop API",
+    "description": "Checkout API for the ADH Shop storefront: catalogue, quotes, transactions, card payments through a payment gateway (sandbox), deliveries and the gateway webhook.\n\nPick an environment (development or production) and run the folders in order. The checkout folder chains its requests through environment variables, so it runs end to end in the Collection Runner.\n\nSwagger UI: https://adh-api.alfredo-dominguez.dev/api/docs",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Liveness",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness (reads DynamoDB)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ready",
+              "host": ["{{baseUrl}}"],
+              "path": ["ready"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Catalogue",
+      "description": "Products with live stock and prices. Seeded; there is no endpoint to create them.",
+      "item": [
+        {
+          "name": "List products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with a page of products', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const page = pm.response.json();",
+                  "  pm.expect(page.items).to.be.an('array').that.is.not.empty;",
+                  "  pm.expect(page).to.have.property('nextCursor');",
+                  "});",
+                  "",
+                  "// Remember a product that can be bought, for the checkout folder.",
+                  "const buyable = pm.response.json().items.find((p) => p.isPurchasable && p.availableUnits > 0);",
+                  "if (buyable && !pm.environment.get('productId')) pm.environment.set('productId', buyable.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "products"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Cursor-paginated. Pass `nextCursor` from a page as `cursor` to read the next one. Image URLs are signed and expire."
+          },
+          "response": []
+        },
+        {
+          "name": "Get a product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with stock and price', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const product = pm.response.json();",
+                  "  pm.expect(product.id).to.eql(pm.environment.get('productId'));",
+                  "  pm.expect(product.availableUnits).to.be.a('number');",
+                  "  pm.expect(product.priceInCents).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "products", "{{productId}}"]
+            },
+            "description": "One product with its current stock."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Checkout — happy path (run in order)",
+      "description": "The whole purchase, as the storefront makes it. Run the folder with the Collection Runner, or request by request.\n\n1. Quote the order: product amount + base fee + delivery fee.\n2. Read the payment terms: the tokens the buyer accepts, and where to tokenise the card.\n3. Create the PENDING transaction: stock is reserved.\n4. Tokenise the card with the payment gateway, as the browser does. The card never reaches this API.\n5. Pay with an idempotency key; then pay again with the same key to see the replay.\n6. Poll the transaction until it is final; the runner repeats the request while it is PENDING.\n7. Read the delivery, assigned when the payment is approved.\n\nSet `cardNumber` in the environment: 4242424242424242 is approved, 4111111111111111 is declined.",
+      "item": [
+        {
+          "name": "1. Quote the order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the three amounts and the total', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const { amounts } = pm.response.json();",
+                  "  pm.expect(amounts.totalInCents).to.eql(amounts.productInCents + amounts.baseFeeInCents + amounts.deliveryFeeInCents);",
+                  "  pm.environment.set('expectedTotalInCents', amounts.totalInCents);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quotes?items={{productId}}:{{units}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quotes"],
+              "query": [
+                {
+                  "key": "items",
+                  "value": "{{productId}}:{{units}}"
+                }
+              ]
+            },
+            "description": "Prices one or more products on the server (`id:units,id:units`). Reserves nothing."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Payment terms",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with acceptance tokens and the tokenisation target', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const terms = pm.response.json();",
+                  "  pm.environment.set('acceptanceToken', terms.acceptance.token);",
+                  "  pm.environment.set('personalDataAuthorizationToken', terms.personalDataAuthorization.token);",
+                  "  pm.environment.set('publicKey', terms.publicKey);",
+                  "  pm.environment.set('cardTokenizationUrl', terms.cardTokenizationUrl);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payment-terms",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payment-terms"]
+            },
+            "description": "The gateway's acceptance documents and tokens, its public key and the card tokenisation URL."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Create the transaction (PENDING)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 PENDING, with its Location', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const transaction = pm.response.json();",
+                  "  pm.expect(transaction.status).to.eql('PENDING');",
+                  "  pm.expect(pm.response.headers.get('Location')).to.include(transaction.id);",
+                  "  pm.environment.set('transactionId', transaction.id);",
+                  "  pm.environment.unset('idempotencyKey');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"units\": {{units}}\n    }\n  ],\n  \"expectedTotalInCents\": {{expectedTotalInCents}},\n  \"customer\": {\n    \"fullName\": \"{{customerName}}\",\n    \"email\": \"{{customerEmail}}\",\n    \"phone\": \"+573001234567\"\n  },\n  \"deliveryAddress\": {\n    \"addressLine1\": \"Calle 93 # 11-26\",\n    \"addressLine2\": \"Apartamento 502\",\n    \"city\": \"Bogotá\",\n    \"region\": \"Cundinamarca\",\n    \"postalCode\": \"110221\",\n    \"country\": \"CO\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions"]
+            },
+            "description": "Reserves the units of every product in one atomic write. `expectedTotalInCents` is the total the buyer saw; a different server total answers 422 AMOUNT_MISMATCH."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Tokenise the card (payment gateway)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with a card token', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.environment.set('cardToken', pm.response.json().data.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{publicKey}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"{{cardNumber}}\",\n  \"cvc\": \"123\",\n  \"exp_month\": \"12\",\n  \"exp_year\": \"29\",\n  \"card_holder\": \"{{customerName}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{cardTokenizationUrl}}",
+            "description": "Sent to the gateway, not to this API, with the gateway's public key. The storefront does this in the browser, so card data never reaches the API: only the token does."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Pay",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// One key per payment attempt; the next request reuses it to show the replay.",
+                  "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202, payment submitted', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().paymentSubmitted).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardToken\": \"{{cardToken}}\",\n  \"installments\": 1,\n  \"acceptanceToken\": \"{{acceptanceToken}}\",\n  \"personalDataAuthorizationToken\": \"{{personalDataAuthorizationToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}/payment",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions", "{{transactionId}}", "payment"]
+            },
+            "description": "Charges the card token through the gateway. Answers 202: the outcome is known later, by polling or by the webhook."
+          },
+          "response": []
+        },
+        {
+          "name": "5b. Pay again with the same key (replayed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 replayed, nothing charged twice', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardToken\": \"{{cardToken}}\",\n  \"installments\": 1,\n  \"acceptanceToken\": \"{{acceptanceToken}}\",\n  \"personalDataAuthorizationToken\": \"{{personalDataAuthorizationToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}/payment",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions", "{{transactionId}}", "payment"]
+            },
+            "description": "The same request under the same key returns the stored response instead of charging again, marked with `Idempotent-Replayed: true`."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Get the transaction (polls until final)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const { status } = pm.response.json();",
+                  "const attempts = Number(pm.environment.get('pollAttempts') || 0);",
+                  "if (status === 'PENDING' && attempts < 15) {",
+                  "  pm.environment.set('pollAttempts', attempts + 1);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.environment.unset('pollAttempts');",
+                  "  pm.test(`final status: ${status}`, () => pm.expect(status).to.be.oneOf(['APPROVED', 'DECLINED', 'VOIDED', 'ERROR']));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions", "{{transactionId}}"]
+            },
+            "description": "While PENDING, this asks the gateway and settles the transaction: status, stock and delivery in one write. In the Collection Runner it repeats every 2 s, up to 15 times, until the status is final."
+          },
+          "response": []
+        },
+        {
+          "name": "7. Get the delivery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('200 with the delivery', () => pm.expect(pm.response.json().status).to.eql('PREPARING'));",
+                  "} else {",
+                  "  pm.test('404: nothing to deliver for a refused payment', () => pm.response.to.have.status(404));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}/delivery",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions", "{{transactionId}}", "delivery"]
+            },
+            "description": "Assigned when the payment is approved: products, recipient, address and estimated date. 404 otherwise."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Validation and errors",
+      "description": "How the API refuses what it should. Every error has the same shape: `{ error: { code, message, details? }, requestId }`.",
+      "item": [
+        {
+          "name": "Unknown product → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 PRODUCT_NOT_FOUND', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PRODUCT_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products/prod-unknown",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "products", "prod-unknown"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Quote a malformed order → 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 VALIDATION_FAILED', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_FAILED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quotes?items=nonsense",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quotes"],
+              "query": [
+                {
+                  "key": "items",
+                  "value": "nonsense"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Quote zero units → 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 INVALID_TRANSACTION', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('INVALID_TRANSACTION');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quotes?items={{productId}}:0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quotes"],
+              "query": [
+                {
+                  "key": "items",
+                  "value": "{{productId}}:0"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Quote more than the stock → 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 409) {",
+                  "  pm.test('409 INSUFFICIENT_STOCK', () => pm.expect(pm.response.json().error.code).to.eql('INSUFFICIENT_STOCK'));",
+                  "} else {",
+                  "  pm.test('200: enough stock for 10 units', () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quotes?items={{productId}}:10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quotes"],
+              "query": [
+                {
+                  "key": "items",
+                  "value": "{{productId}}:10"
+                }
+              ]
+            },
+            "description": "Answers 409 INSUFFICIENT_STOCK when fewer than 10 units are left; 200 otherwise."
+          },
+          "response": []
+        },
+        {
+          "name": "Create with a stale total → 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 AMOUNT_MISMATCH', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('AMOUNT_MISMATCH');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"units\": 1\n    }\n  ],\n  \"expectedTotalInCents\": 1,\n  \"customer\": {\n    \"fullName\": \"{{customerName}}\",\n    \"email\": \"{{customerEmail}}\",\n    \"phone\": \"+573001234567\"\n  },\n  \"deliveryAddress\": {\n    \"addressLine1\": \"Calle 93 # 11-26\",\n    \"addressLine2\": \"Apartamento 502\",\n    \"city\": \"Bogotá\",\n    \"region\": \"Cundinamarca\",\n    \"postalCode\": \"110221\",\n    \"country\": \"CO\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions"]
+            },
+            "description": "The total the buyer saw no longer matches: nothing is reserved."
+          },
+          "response": []
+        },
+        {
+          "name": "Create with an invalid body → 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 VALIDATION_FAILED', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_FAILED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [],\n  \"customer\": {\n    \"email\": \"not-an-email\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Transaction id that is not a UUID → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 BAD_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('BAD_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/abc",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions", "abc"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unknown transaction → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 TRANSACTION_NOT_FOUND', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('TRANSACTION_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/00000000-0000-4000-8000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transactions", "00000000-0000-4000-8000-000000000000"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Pay without an Idempotency-Key → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 BAD_REQUEST', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('BAD_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardToken\": \"tok_test\",\n  \"installments\": 1,\n  \"acceptanceToken\": \"x\",\n  \"personalDataAuthorizationToken\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/00000000-0000-4000-8000-000000000000/payment",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "00000000-0000-4000-8000-000000000000",
+                "payment"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unsigned payment event → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 INVALID_PAYMENT_EVENT', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('INVALID_PAYMENT_EVENT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"transaction.updated\",\n  \"data\": {\n    \"transaction\": {\n      \"id\": \"x\",\n      \"status\": \"APPROVED\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payment-events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payment-events"]
+            },
+            "description": "The gateway's webhook. Events are verified with the events secret (SHA-256 checksum, compared in constant time); an unsigned or tampered one is refused."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Every response carries a request id, to find it in the logs.",
+          "if (pm.request.url.getHost() !== pm.variables.replaceIn('{{cardTokenizationUrl}}').split('/')[2]) {",
+          "  pm.test('has a request id', () => pm.expect(pm.response.headers.get('X-Request-Id')).to.be.a('string'));",
+          "}"
+        ]
+      }
+    }
+  ]
+}
