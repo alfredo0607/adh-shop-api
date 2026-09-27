@@ -74,9 +74,10 @@ collections, body size limits.
 **API5 Broken function level authorization.** Guards are declared per route. A route
 with no guard is public — make that a deliberate decision, not an oversight.
 
-**API8 Security misconfiguration.** `helmet` for security headers, CORS restricted to
-known origins (serving the SPA and API from one CloudFront domain removes cross-origin
-requests entirely), stack traces disabled in production.
+**API8 Security misconfiguration.** `helmet` for every security header, set in one place
+(`security-headers.ts`) so no proxy adds a second, contradictory copy; a
+`default-src 'none'; frame-ancestors 'none'` Content-Security-Policy on JSON responses;
+CORS restricted to the storefront's origin; stack traces disabled in production.
 
 **API10 Unsafe consumption of third-party APIs.** The payment gateway will time out,
 rate-limit and return malformed responses. Every outbound call gets an explicit

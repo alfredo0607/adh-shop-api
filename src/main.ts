@@ -3,12 +3,12 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import compression from 'compression';
-import helmet from 'helmet';
 import { Logger as PinoLogger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
 import { ENVIRONMENT, type Environment } from './shared/infrastructure/config/environment';
 import { AllExceptionsFilter } from './shared/infrastructure/http/all-exceptions.filter';
+import { securityHeaders } from './shared/infrastructure/http/security-headers';
 
 const bootstrap = async (): Promise<void> => {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
@@ -16,12 +16,8 @@ const bootstrap = async (): Promise<void> => {
   app.useLogger(app.get(PinoLogger));
   const environment = app.get<Environment>(ENVIRONMENT);
 
-  // Security headers. `contentSecurityPolicy` is disabled because this process
-  // serves JSON only: the SPA is delivered from its own origin, which applies its own
-  // policy. A CSP on an API response protects nothing and misleads reviewers.
-  app.use(
-    helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } }),
-  );
+  // Security headers, from one place; see securityHeaders.
+  app.use(...securityHeaders());
   app.use(compression());
 
   const allowedOrigins = environment.CORS_ALLOWED_ORIGINS.split(',')
