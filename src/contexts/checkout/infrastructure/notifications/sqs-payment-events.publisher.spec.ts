@@ -3,6 +3,7 @@ import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 
 import { NOW, TOTAL_FOR_ONE, aTransaction } from '../../__fixtures__/checkout.fixture';
 import { Delivery } from '../../domain/delivery';
+import type { DeliveryAddress } from '../../domain/delivery-address';
 import { toPaymentSettledMessage } from './payment-settled.message';
 import { SqsPaymentEventsPublisher } from './sqs-payment-events.publisher';
 
@@ -59,6 +60,25 @@ describe('toPaymentSettledMessage', () => {
     });
   });
 
+  it('leaves out the address lines the buyer did not give', () => {
+    const transaction = aTransaction();
+    jest.spyOn(transaction, 'deliveryAddress', 'get').mockReturnValue({
+      addressLine1: 'Calle 1 # 2-3',
+      city: 'Cali',
+      region: 'Valle del Cauca',
+      country: 'CO',
+    } as DeliveryAddress);
+
+    const message = toPaymentSettledMessage({ transaction, occurredAt: SETTLED_AT });
+
+    expect(message.delivery).toEqual({
+      addressLine1: 'Calle 1 # 2-3',
+      city: 'Cali',
+      region: 'Valle del Cauca',
+      country: 'CO',
+    });
+  });
+
   it('leaves out the delivery date when nothing will be delivered, and never the phone', () => {
     const message = toPaymentSettledMessage({
       transaction: aTransaction(),
@@ -112,6 +132,19 @@ describe('SqsPaymentEventsPublisher', () => {
       expect.stringContaining('6f1c2b9e-8f4a-4d7e-9a51-1b2c3d4e5f60'),
     );
     expect(error).toHaveBeenCalledWith(expect.stringContaining('AccessDenied'));
+    error.mockRestore();
+  });
+
+  it('logs whatever was thrown, even when it is not an Error', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const send: Send = jest.fn().mockRejectedValue('socket hang up');
+
+    await new SqsPaymentEventsPublisher(clientSending(send), QUEUE_URL).settled({
+      transaction: aTransaction(),
+      occurredAt: SETTLED_AT,
+    });
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('socket hang up'));
     error.mockRestore();
   });
 });

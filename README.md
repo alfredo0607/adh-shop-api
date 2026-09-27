@@ -1,9 +1,9 @@
 # ADH Shop API
 
-Backend for a single-product storefront checkout: browse the catalogue, pay by card
-through a payment gateway (sandbox), and receive the product. Built with NestJS and
-TypeScript as a hexagonal architecture with Railway Oriented Programming, on DynamoDB,
-deployed to AWS.
+Backend for the ADH Shop storefront checkout: browse the catalogue, pay by card for an
+order of one or several products through a payment gateway (sandbox), and receive them.
+Built with NestJS and TypeScript as a hexagonal architecture with Railway Oriented
+Programming, on DynamoDB, deployed to AWS.
 
 | Resource         | URL                                                                         |
 | ---------------- | --------------------------------------------------------------------------- |
@@ -320,7 +320,10 @@ exactly one, and an inconsistent stock row rolls the whole settlement back.
   (Valkey, IAM auth) with an atomic Lua script. The client IP is read through two trusted
   proxies, and the origin accepts HTTPS **only from Cloudflare's ranges**, so the header
   cannot be forged by skipping the edge.
-- **Headers and transport**: Helmet (HSTS and others), HTTPS only, CORS limited to the
+- **Headers and transport**: every security header from one place in the application
+  (Helmet: HSTS, `X-Frame-Options: DENY`, `nosniff`, Referrer-Policy, cross-origin
+  policies), plus `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` on
+  every JSON response as OWASP recommends for APIs. HTTPS only, CORS limited to the
   storefront's origin, `Cache-Control: no-store` on every personal or payment response.
 - **Secrets** live in SSM Parameter Store (SecureString) and reach the container only at
   deploy time. None are in the code, the image or Terraform state.
@@ -332,25 +335,27 @@ Details: [`docs/guide/security.md`](docs/guide/security.md).
 ## Tests and coverage
 
 ```
-pnpm test        # 541 tests
+pnpm test        # 558 tests
 pnpm test:cov    # with the 80% threshold enforced
 ```
 
-Latest run: **46 suites, 541 tests, all passing.**
+Latest run: **48 suites, 558 tests, all passing.**
 
 | Scope                            | Statements |   Branches |  Functions |      Lines |
 | -------------------------------- | ---------: | ---------: | ---------: | ---------: |
-| **All files**                    | **97.98%** | **87.60%** | **98.23%** | **98.05%** |
-| catalog · domain                 |     97.66% |     94.87% |       100% |     97.52% |
+| **All files**                    | **98.02%** | **87.87%** | **98.26%** | **98.09%** |
+| catalog · domain                 |     97.65% |     94.87% |       100% |     97.52% |
 | catalog · application            |       100% |       100% |       100% |       100% |
-| catalog · persistence            |     97.89% |     86.89% |       100% |     98.50% |
+| catalog · persistence            |     97.88% |     86.88% |       100% |     98.49% |
 | checkout · domain                |     98.61% |     96.61% |       100% |     98.57% |
-| checkout · application           |     97.39% |     84.62% |     96.77% |     97.93% |
-| checkout · payment gateway       |     98.00% |     93.18% |       100% |     97.94% |
-| checkout · persistence           |     97.39% |     84.21% |     98.39% |     97.16% |
-| shared · domain (Result, errors) |     99.16% |     93.94% |       100% |     99.07% |
+| checkout · application           |     97.46% |     85.00% |     96.92% |     98.00% |
+| checkout · payment gateway       |     98.00% |     93.18% |       100% |     97.93% |
+| checkout · payment events        |       100% |       100% |       100% |       100% |
+| checkout · persistence           |     97.38% |     84.21% |     98.38% |     97.16% |
+| shared · domain (Result, errors) |     99.15% |     93.93% |       100% |     99.07% |
+| shared · HTTP (headers, errors)  |       100% |       100% |       100% |       100% |
 | shared · idempotency             |     97.70% |     76.19% |     94.44% |     98.78% |
-| shared · rate limit              |     93.33% |     75.00% |     93.33% |     92.65% |
+| shared · rate limit              |     93.33% |     75.00% |     93.33% |     92.64% |
 
 What the suite covers, beyond line counts:
 
