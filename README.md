@@ -5,14 +5,15 @@ order of one or several products through a payment gateway (sandbox), and receiv
 Built with NestJS and TypeScript as a hexagonal architecture with Railway Oriented
 Programming, on DynamoDB, deployed to AWS.
 
-| Resource         | URL                                                                         |
-| ---------------- | --------------------------------------------------------------------------- |
-| API base         | `https://adh-api.alfredo-dominguez.dev/api/v1`                              |
-| **Swagger UI**   | https://adh-api.alfredo-dominguez.dev/api/docs                              |
-| OpenAPI document | https://adh-api.alfredo-dominguez.dev/api/docs-json                         |
-| Liveness / ready | `/health` · `/ready`                                                        |
-| Infrastructure   | [adh-shop-infra](https://github.com/alfredo0607/adh-shop-infra) (Terraform) |
-| Payment webhook  | `https://adh-api.alfredo-dominguez.dev/api/v1/payment-events`               |
+| Resource         | URL                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| API base         | `https://adh-api.alfredo-dominguez.dev/api/v1`                                        |
+| **Swagger UI**   | https://adh-api.alfredo-dominguez.dev/api/docs                                        |
+| OpenAPI document | https://adh-api.alfredo-dominguez.dev/api/docs-json                                   |
+| **Postman**      | [`docs/postman/`](docs/postman): collection + development and production environments |
+| Liveness / ready | `/health` · `/ready`                                                                  |
+| Infrastructure   | [adh-shop-infra](https://github.com/alfredo0607/adh-shop-infra) (Terraform)           |
+| Payment webhook  | `https://adh-api.alfredo-dominguez.dev/api/v1/payment-events`                         |
 
 > [!IMPORTANT]
 > **Payment events webhook — for whoever can reach the sandbox merchant account**
@@ -75,15 +76,15 @@ the API those screens call.
 
 ### Responsibilities
 
-| The exercise asks                                               | Status | How                                                                                                                         |
-| --------------------------------------------------------------- | :----: | --------------------------------------------------------------------------------------------------------------------------- |
-| Overall API design and information architecture                 |   ✅   | Two bounded contexts, hexagonal layers, one DynamoDB table ([Architecture](#architecture), [Data model](#data-model))       |
-| Decide what each endpoint receives and returns; publish Swagger |   ✅   | Explicit request and response DTOs; public [Swagger](https://adh-api.alfredo-dominguez.dev/api/docs)                        |
-| Validations for real-life situations                            |   ✅   | Stale totals, two buyers for the last unit, retried payments, expired reservations, gateway outages, forged events          |
-| Handle sensitive data safely                                    |   ✅   | No card data, masked personal data, secrets in SSM, signed charges and events ([Security](#security))                       |
-| An API with stock, transactions, customers and deliveries       |   ✅   | All four persisted; customers deliberately reached only through their order ([Endpoints](#endpoints))                       |
-| Endpoints performing different types of requests                |   ✅   | `GET` and `POST`, answering `200`, `201`, `202`, `400`, `404`, `409`, `422`, `503` where each applies                       |
-| Resilient: recover the client's progress after a refresh        |   ✅   | The storefront keeps only the transaction id; `GET /transactions/{id}` returns the full state, including `paymentSubmitted` |
+| The exercise asks                                               | Status | How                                                                                                                                                                                               |
+| --------------------------------------------------------------- | :----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overall API design and information architecture                 |   ✅   | Two bounded contexts, hexagonal layers, one DynamoDB table ([Architecture](#architecture), [Data model](#data-model))                                                                             |
+| Decide what each endpoint receives and returns; publish Swagger |   ✅   | Explicit request and response DTOs; public [Swagger](https://adh-api.alfredo-dominguez.dev/api/docs) and a [Postman collection](#postman-collection) with development and production environments |
+| Validations for real-life situations                            |   ✅   | Stale totals, two buyers for the last unit, retried payments, expired reservations, gateway outages, forged events                                                                                |
+| Handle sensitive data safely                                    |   ✅   | No card data, masked personal data, secrets in SSM, signed charges and events ([Security](#security))                                                                                             |
+| An API with stock, transactions, customers and deliveries       |   ✅   | All four persisted; customers deliberately reached only through their order ([Endpoints](#endpoints))                                                                                             |
+| Endpoints performing different types of requests                |   ✅   | `GET` and `POST`, answering `200`, `201`, `202`, `400`, `404`, `409`, `422`, `503` where each applies                                                                                             |
+| Resilient: recover the client's progress after a refresh        |   ✅   | The storefront keeps only the transaction id; `GET /transactions/{id}` returns the full state, including `paymentSubmitted`                                                                       |
 
 ### Backend development
 
@@ -215,6 +216,33 @@ complete contract, with examples, is in [Swagger](https://adh-api.alfredo-doming
 transaction and its delivery with the email and phone masked. The brief has no user
 accounts, so a `GET /customers/{id}` would hand anyone holding an id a person's full
 contact details. Customer data is reached only through the order it belongs to.
+
+### Postman collection
+
+[`docs/postman/`](docs/postman) holds the collection and two environments. Import all
+three into Postman, pick an environment, and run the folders in order:
+
+| File                                   | What it is                                                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `adh-shop-api.postman_collection.json` | 22 requests in four folders: health, catalogue, the checkout end to end, and validation and errors. Every request has tests |
+| `development.postman_environment.json` | `baseUrl` = `http://localhost:3000` (see [Running locally](#running-locally))                                               |
+| `production.postman_environment.json`  | `baseUrl` = `https://adh-api.alfredo-dominguez.dev`                                                                         |
+
+The **checkout** folder chains its requests through environment variables, so the
+Collection Runner plays the whole purchase: quote, payment terms, PENDING transaction,
+card tokenised with the gateway (as the browser does), payment, the same payment
+replayed under its idempotency key, polling until the status is final, and the delivery.
+Set `cardNumber` to `4242424242424242` for an approval or `4111111111111111` for a
+decline, and `customerEmail` to your address to receive the payment email.
+
+From the command line:
+
+```bash
+npx newman run docs/postman/adh-shop-api.postman_collection.json \
+  -e docs/postman/production.postman_environment.json
+```
+
+Against production it runs 23 requests and 46 assertions, all passing.
 
 ## Architecture
 
