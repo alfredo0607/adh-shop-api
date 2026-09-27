@@ -363,15 +363,15 @@ Details: [`docs/guide/security.md`](docs/guide/security.md).
 ## Tests and coverage
 
 ```
-pnpm test        # 558 tests
+pnpm test        # 560 tests
 pnpm test:cov    # with the 80% threshold enforced
 ```
 
-Latest run: **48 suites, 558 tests, all passing.**
+Latest run: **48 suites, 560 tests, all passing.**
 
 | Scope                            | Statements |   Branches |  Functions |      Lines |
 | -------------------------------- | ---------: | ---------: | ---------: | ---------: |
-| **All files**                    | **98.02%** | **87.87%** | **98.26%** | **98.09%** |
+| **All files**                    | **98.03%** | **87.92%** | **98.26%** | **98.09%** |
 | catalog · domain                 |     97.65% |     94.87% |       100% |     97.52% |
 | catalog · application            |       100% |       100% |       100% |       100% |
 | catalog · persistence            |     97.88% |     86.88% |       100% |     98.49% |
@@ -423,12 +423,17 @@ aws dynamodb create-table --endpoint-url http://localhost:8000 \
   --key-schema AttributeName=PK,KeyType=HASH AttributeName=SK,KeyType=RANGE \
   --global-secondary-indexes 'IndexName=GSI1,KeySchema=[{AttributeName=GSI1PK,KeyType=HASH},{AttributeName=GSI1SK,KeyType=RANGE}],Projection={ProjectionType=ALL}'
 
-# 4. Seed the catalogue and start
-pnpm seed
+# 4. Seed the catalogue from .env, and start
+pnpm seed:local
 pnpm start:dev              # http://localhost:3000/api/docs
 ```
 
-The seed is idempotent: re-running it restores the demo stock levels.
+The seed is idempotent: re-running it restores the demo stock levels. `pnpm seed:local`
+reads `.env`; `pnpm seed` reads only the shell environment, so seeding the AWS table
+never picks up the local `DYNAMODB_ENDPOINT` by accident.
+
+In `.env`, the payment gateway values are the sandbox keys and URL provided with the
+exercise. Optional keys may be left empty (`KEY=`): they count as unset.
 
 ## Configuration
 

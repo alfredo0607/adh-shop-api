@@ -14,6 +14,16 @@ import { z } from 'zod';
  * put knowledge of the vendor inside the codebase that the ports-and-adapters
  * boundary exists to keep out.
  */
+
+/**
+ * An optional URL, where an empty value counts as unset. `.env.example` lists
+ * every key, some deliberately left as `KEY=`, and a copy of it must boot.
+ */
+const optionalUrl = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.string().url().optional(),
+);
+
 export const environmentSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -23,7 +33,7 @@ export const environmentSchema = z
     AWS_REGION: z.string().min(1, 'AWS_REGION is required'),
     DYNAMODB_TABLE_NAME: z.string().min(1, 'DYNAMODB_TABLE_NAME is required'),
     /** Set only when pointing at DynamoDB Local; unset in deployed environments. */
-    DYNAMODB_ENDPOINT: z.string().url().optional(),
+    DYNAMODB_ENDPOINT: optionalUrl,
 
     PAYMENT_API_URL: z.string().url('PAYMENT_API_URL must be a valid URL'),
     PAYMENT_PUBLIC_KEY: z.string().min(1, 'PAYMENT_PUBLIC_KEY is required'),
@@ -118,7 +128,7 @@ export const environmentSchema = z
      * without it payments work as before and nobody is emailed, which is what
      * a local run wants.
      */
-    PAYMENT_EVENTS_QUEUE_URL: z.string().url().optional(),
+    PAYMENT_EVENTS_QUEUE_URL: optionalUrl,
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV !== 'production') return;
