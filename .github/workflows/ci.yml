@@ -65,11 +65,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Every step runs a package.json script, so CI and a local `pnpm check`
+      # run exactly the same commands.
+      - name: Formatting
+        run: pnpm format:check
+
       - name: Lint
         run: pnpm lint
 
       - name: Typecheck
-        run: pnpm exec tsc --noEmit -p tsconfig.json
+        run: pnpm typecheck
 
       # The 80% threshold lives in jest.config.ts, so this step fails on its own
       # if coverage regresses. No separate gate to keep in sync.

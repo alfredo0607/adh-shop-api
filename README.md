@@ -435,6 +435,22 @@ never picks up the local `DYNAMODB_ENDPOINT` by accident.
 In `.env`, the payment gateway values are the sandbox keys and URL provided with the
 exercise. Optional keys may be left empty (`KEY=`): they count as unset.
 
+### Scripts
+
+| Command            | What it does                                                          |
+| ------------------ | --------------------------------------------------------------------- |
+| `pnpm start:dev`   | The API with reload on change                                         |
+| `pnpm start:debug` | The same, with the Node inspector attached                            |
+| `pnpm build`       | Compiles to `dist/`; `pnpm start:prod` runs it                        |
+| `pnpm seed:local`  | Seeds the table named in `.env`; `pnpm seed` reads the shell instead  |
+| `pnpm check`       | Every CI gate in order: formatting, lint, types, tests with coverage  |
+| `pnpm format`      | Prettier over the repository; `format:check` only reports             |
+| `pnpm lint`        | ESLint, type-aware; `lint:fix` applies the safe fixes                 |
+| `pnpm typecheck`   | TypeScript, no output                                                 |
+| `pnpm test`        | Jest; `test:watch` reruns on change; `test:cov` enforces the 80% gate |
+
+CI runs these same scripts, so a green `pnpm check` locally means a green pipeline.
+
 ## Configuration
 
 Validated once at boot with zod. A missing or malformed variable stops the process and

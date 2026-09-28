@@ -32,8 +32,14 @@ export default tseslint.config(
           patterns: [
             { group: ['@nestjs/*'], message: 'The domain must not depend on Nest.' },
             { group: ['@aws-sdk/*'], message: 'The domain must not depend on the AWS SDK.' },
-            { group: ['**/infrastructure/**'], message: 'Dependencies point inwards: the domain must not reach into infrastructure.' },
-            { group: ['**/application/**'], message: 'The domain must not know about its own use cases.' },
+            {
+              group: ['**/infrastructure/**'],
+              message: 'Dependencies point inwards: the domain must not reach into infrastructure.',
+            },
+            {
+              group: ['**/application/**'],
+              message: 'The domain must not know about its own use cases.',
+            },
           ],
         },
       ],
