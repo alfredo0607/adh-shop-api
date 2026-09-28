@@ -102,7 +102,6 @@ describe('RedisThrottlerStorage', () => {
       expect(hashTag(hitsKey)).toBe('strict:clientx');
       expect(hashTag(blockKey)).toBe(hashTag(hitsKey));
     });
-
   });
 
   describe('when the store is unreachable', () => {
