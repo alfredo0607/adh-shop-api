@@ -35,6 +35,14 @@ describe('RedisThrottlerStorage (integration)', () => {
 
   const uniqueKey = (): string => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+  const waitUntil = async (condition: () => Promise<boolean>, timeoutMs: number): Promise<void> => {
+    const deadline = Date.now() + timeoutMs;
+    while (!(await condition())) {
+      if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs} ms`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
+
   describe('counting within a window', () => {
     it('increments on each call and reports the hits so far', async () => {
       const key = uniqueKey();
@@ -102,23 +110,34 @@ describe('RedisThrottlerStorage (integration)', () => {
         await storage.increment(key, 10_000, 3, 5_000, 'default');
       }
 
-      const first = await storage.increment(key, 10_000, 3, 5_000, 'default');
-      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      const { blockKey } = buildKeys(PREFIX, 'default', key);
+      const blockEnd = async (): Promise<unknown> => redis.call('PEXPIRETIME', blockKey);
+
+      await storage.increment(key, 10_000, 3, 5_000, 'default');
+      const endWhenBlocked = await blockEnd();
+      await new Promise((resolve) => setTimeout(resolve, 50));
       const second = await storage.increment(key, 10_000, 3, 5_000, 'default');
 
       expect(second.isBlocked).toBe(true);
       // Hammering the endpoint while blocked must not restart the block, or a
-      // caller could never recover from one.
-      expect(second.timeToBlockExpire).toBeLessThanOrEqual(first.timeToBlockExpire);
+      // caller could never recover from one. Compared as an absolute expiry,
+      // which a correction of the server's clock does not move.
+      expect(await blockEnd()).toBe(endWhenBlocked);
     });
 
     it('releases the caller once the block expires', async () => {
       const key = uniqueKey();
+      const { blockKey } = buildKeys(PREFIX, 'default', key);
 
       for (let i = 0; i < 3; i += 1) {
         await storage.increment(key, 10_000, 2, 1_000, 'default');
       }
-      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      expect(await redis.exists(blockKey)).toBe(1);
+
+      // Waits for Redis itself to expire the block, by its own clock, instead
+      // of sleeping a fixed time on ours: the two can disagree by seconds in a
+      // Docker VM. A block that never expired would still fail, on the timeout.
+      await waitUntil(async () => (await redis.exists(blockKey)) === 0, 8_000);
 
       const afterBlock = await storage.increment(key, 10_000, 2, 1_000, 'default');
 
