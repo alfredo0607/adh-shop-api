@@ -61,15 +61,23 @@ describe('RedisThrottlerStorage (integration)', () => {
 
     it('does not extend the window on subsequent hits', async () => {
       const key = uniqueKey();
+      const { hitsKey } = buildKeys(PREFIX, 'default', key);
+      // The absolute moment the window ends, in Unix milliseconds.
+      const windowEnd = async (): Promise<unknown> => redis.call('PEXPIRETIME', hitsKey);
 
-      const first = await storage.increment(key, 3_000, 10, 3_000, 'default');
-      await new Promise((resolve) => setTimeout(resolve, 1_100));
-      const later = await storage.increment(key, 3_000, 10, 3_000, 'default');
+      await storage.increment(key, 3_000, 10, 3_000, 'default');
+      const endAfterFirstHit = await windowEnd();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await storage.increment(key, 3_000, 10, 3_000, 'default');
 
       // A fixed window must expire from its first hit. If each call reset the
       // expiry, a steady stream of traffic would hold the window open forever
       // and the counter would never reset.
-      expect(later.timeToExpire).toBeLessThan(first.timeToExpire);
+      //
+      // Compared as an absolute expiry rather than as time remaining: the
+      // remaining time also moves when the server's clock is corrected, as it
+      // is in a Docker VM on a laptop, which made the old assertion flaky.
+      expect(await windowEnd()).toBe(endAfterFirstHit);
     });
   });
 
