@@ -79,6 +79,23 @@ describe('parseEnvironment', () => {
     ).toBe('http://localhost:8000');
   });
 
+  it('boots from a copy of .env.example, where optional URLs are left empty', () => {
+    const environment = parseEnvironment({
+      ...validEnvironment,
+      DYNAMODB_ENDPOINT: '',
+      PAYMENT_EVENTS_QUEUE_URL: '',
+    });
+
+    expect(environment.DYNAMODB_ENDPOINT).toBeUndefined();
+    expect(environment.PAYMENT_EVENTS_QUEUE_URL).toBeUndefined();
+  });
+
+  it('still rejects an optional URL that is set but malformed', () => {
+    expect(() =>
+      parseEnvironment({ ...validEnvironment, PAYMENT_EVENTS_QUEUE_URL: 'not a url' }),
+    ).toThrow(/PAYMENT_EVENTS_QUEUE_URL/);
+  });
+
   it('keeps fees as integers, because money must never be floating point', () => {
     const environment = parseEnvironment({ ...validEnvironment, BASE_FEE_IN_CENTS: '1500' });
 
